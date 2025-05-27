@@ -1,0 +1,30 @@
+# This is a comment, lines starting with # will be ignored
+
+# Specify the target object (directory or archive file)
+# This can be an absolute path or a path relative to this config file's directory.
+object=C:\proj\wrapper-api\wrapper1cobu
+# Example of a relative path (if your target is in a subfolder 'my_project'):
+# object=my_project
+
+# Optional: Specify the base output filename (datetime will be appended automatically)
+# If not specified, "output" will be used as the base name.
+output_filename=project_structure
+
+# Optional: Comma-separated list of directory NAMES to exclude (case-insensitive).
+# These directories (and their contents) will be skipped wherever they are found
+# within the target object.
+# Example: exclude_dirs=.git,.venv,node_modules,__pycache__,build,dist,target
+exclude_dirs=.convert,.git,__pycache__,node_modules,target,build,dist,.mypy_cache,.pytest_cache,logs,local_chatgpt_clone_profile
+
+# Optional: Comma-separated list of specific FILES to exclude.
+# Provide FULL ABSOLUTE PATHS for these files.
+# These files will be skipped.
+# For files within archives, the script will attempt to match if an excluded absolute path
+# ends with the relative path of the file within the archive.
+# Example: exclude_files=C:\proj\important\secrets.txt,C:\proj\wrapper-api\wrapper1cobu\specific_log.log
+
+exclude_files=C:\proj\wrapper-api\wrapper1cobu\tests\test_results.txt
+
+
+# You could add other settings here in the future, for example:
+# max_depth=5

@@ -1,0 +1,46 @@
+# Python项目通用.gitignore
+
+# 虚拟环境
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 日志文件
+logs/
+*.log
+
+# 浏览器缓存
+local_chatgpt_clone_profile/
+
+# 测试相关
+pytest.ini
+__pycache__
+test_*.py
+*.pytest_cache*
+
+# IDE配置
+.vscode/
+.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 配置文件（如果存在本地敏感配置）
+config_local.yaml
+
+# 临时文件
+*.tmp
+*.swp
+
+# 打包文件
+*.zip
+*.tar.gz
+
+# 浏览器缓存目录
+browser_cache/
+
+.convert
