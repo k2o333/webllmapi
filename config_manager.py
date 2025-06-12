@@ -1,12 +1,15 @@
 import os
 import yaml
+import logging  # <--- 修改：导入 logging
 from pathlib import Path
 from typing import List, Dict, Optional, Union, Any
 from models import AppConfig, LLMSiteConfig, GlobalSettings
-from utils import setup_logging
+# from utils import setup_logging  # <--- 修改：不再从 utils 导入 setup_logging
 
 # Initialize logger
-logger = setup_logging(log_level=os.getenv("LOG_LEVEL", "INFO"))
+# <--- 关键修改：不再调用 setup_logging()，只获取一个 logger 实例。
+# 这个 logger 会自动继承 main.py 中配置的根 logger 的设置。
+logger = logging.getLogger("wrapper_api.config_manager")
 
 # Global config instance
 _config: Optional[AppConfig] = None
@@ -134,6 +137,10 @@ def reload_config(config_path: Union[str, Path] = "config.yaml") -> AppConfig:
 
 # Example usage
 if __name__ == "__main__":
+    # This part only runs when you execute `python config_manager.py` directly
+    # It needs its own logging setup for testing
+    from utils import setup_logging
+    setup_logging()
     try:
         # Load configuration
         config = get_config()

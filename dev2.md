@@ -6,30 +6,31 @@
 
 目录：
 
-1. 项目概述与目标
-2. 核心原则
-3. 技术栈 (Windows 环境)
-4. 项目文件结构
-5. 核心模块设计
-    * 5.1 配置管理 (config_manager.py & config.yaml)
-    * 5.2 浏览器自动化处理器 (browser_handler.py)
-    * 5.3 API 服务 (main.py)
-    * 5.4 数据模型 (models.py)
-    * 5.5 工具与日志 (utils.py)
-6. 分阶段实施计划 (Windows 环境优化)
-    * 阶段 0: 环境搭建与基础框架 (Windows 重点)
-    * 阶段 1: 单一网站核心自动化 (非流式) 与基础测试
-    * 阶段 2: FastAPI 接口封装 (非流式) 与初步并发控制
-    * 阶段 3: 实现流式响应与性能考量
-    * 阶段 4: 浏览器实例池与资源监控
-    * 阶段 5: 鲁棒性、高级功能与可维护性提升
-7. 规范与最佳实践
-    * 7.1 日志规范与管理
-    * 7.2 错误处理与快照
-    * 7.3 安全注意事项 (Windows 本地)
-    * 7.4 测试策略与节奏
-    * 7.5 依赖管理
-8. 部署与运行 (Windows 本地)
+1.  项目概述与目标
+2.  核心原则
+3.  技术栈 (Windows 环境)
+4.  项目文件结构
+5.  核心模块设计
+    *   5.1 配置管理 (config\_manager.py & config.yaml)
+    *   5.2 浏览器自动化处理器 (browser\_handler.py)
+    *   5.3 API 服务 (main.py)
+    *   5.4 数据模型 (models.py)
+    *   5.5 工具与日志 (utils.py)
+6.  分阶段实施计划 (Windows 环境优化)
+    *   阶段 0: 环境搭建与基础框架 (Windows 重点)
+    *   阶段 1: 单一网站核心自动化 (非流式) 与基础测试
+    *   阶段 2: FastAPI 接口封装 (非流式) 与初步并发控制
+    *   阶段 3: 实现流式响应与性能考量
+    *   阶段 4: 浏览器实例池与资源监控
+    *   阶段 5: 鲁棒性、高级功能与可维护性提升
+7.  规范与最佳实践
+    *   7.1 日志规范与管理
+    *   7.2 错误处理与快照
+    *   7.3 安全注意事项 (Windows 本地)
+    *   7.4 测试策略与节奏
+    *   7.5 依赖管理
+8.  部署与运行 (Windows 本地)
+
 ## 1. 项目概述与目标
 
 本项目旨在通过 Firefox 浏览器自动化技术，在 **Windows 本地环境**下模拟用户访问各种 LLM 网站的操作，并将这些操作封装成符合 OpenAI Chat Completions API 规范 (/v1/chat/completions) 的本地服务。
@@ -285,7 +286,7 @@ llm_sites:
         *   核心方法，处理发送提示到获取响应的整个流程。
         *   调用 `_launch_browser_if_needed`, `_ensure_page_options`。
         *   使用 `_perform_action` 发送提示。
-        *   根据 `response_handling.type` (stream/full_text) 调用不同的等待和提取逻辑：
+        *   根据 `response_handling.type` (stream/full\_text) 调用不同的等待和提取逻辑：
             *   **流式 (`stream_callback` 提供时)**: 监控 `streaming_response_target` 的文本变化（使用 `stream_text_property`），通过 `stream_callback` 回传增量文本。根据 `stream_end_conditions` (带优先级) 判断结束。
             *   **完整文本**: 等待 `full_text_wait_strategy` 条件满足，然后从 `extraction_selector_key` 提取文本。
     *   **流式响应结束条件优先级 (`stream_end_conditions`)**:
@@ -337,6 +338,7 @@ llm_sites:
 ## 6. 分阶段实施计划 (Windows 环境优化)
 
 ### 阶段 0: 环境搭建与基础框架 (Windows 重点)
+
 *   **任务：**
     1.  环境设置。
     2.  安装核心依赖 (`requirements.txt`)，包括 `psutil`, `tenacity`。
@@ -347,8 +349,9 @@ llm_sites:
 *   **产出：** 可加载配置的基础框架，日志系统可用。
 
 ### 阶段 1: 单一网站核心自动化 (非流式) 与基础测试
+
 *   **任务：**
-    1.  完善 `config.yaml` 中一个站点的详细配置 (selectors, profile, options_to_sync, response_handling (full_text), health_check)。
+    1.  完善 `config.yaml` 中一个站点的详细配置 (selectors, profile, options\_to\_sync, response\_handling (full\_text), health\_check)。
     2.  `browser_handler.py` (`LLMWebsiteAutomator`):
         *   `__init__`, `_launch_browser_if_needed` (集成 `playwright-stealth`, 启动选项)。
         *   `_get_selector` (支持备用选择器)。
@@ -365,6 +368,7 @@ llm_sites:
 *   **产出：** 能够通过代码自动化一个网站的完整交互（登录复用、选项同步、发送提示、获取完整响应）。
 
 ### 阶段 2: FastAPI 接口封装 (非流式) 与初步并发控制
+
 *   **任务：**
     1.  `main.py`:
         *   FastAPI 应用，`/v1/chat/completions` 端点 (非流式)。
@@ -376,6 +380,7 @@ llm_sites:
 *   **产出：** 可通过 OpenAI 兼容 API 调用单个网站的非流式聊天功能。
 
 ### 阶段 3: 实现流式响应与性能考量
+
 *   **任务：**
     1.  `config.yaml`: 完善站点的 `response_handling` (stream 类型, `stream_text_property`, `stream_end_conditions` 带优先级和超时, `stream_poll_interval_ms`)。
     2.  `browser_handler.py` (`LLMWebsiteAutomator`):
@@ -388,6 +393,7 @@ llm_sites:
 *   **产出：** API 支持流式响应。
 
 ### 阶段 4: 并发处理与浏览器实例管理
+
 *   **任务：**
     1.  `main.py`:
         *   将 `automators` 从单实例字典改为 `automator_pools: Dict[str, asyncio.Queue[LLMWebsiteAutomator]]`。
@@ -401,11 +407,11 @@ llm_sites:
 *   **产出：** 提升并发处理能力，更有效地管理浏览器资源。
 
 ### 阶段 5: 鲁棒性、高级功能与可维护性提升
+
 *   **任务：**
     1.  **配置热更新**: `main.py` 实现 `/reload_config` API 端点和相应逻辑。
     2.  **后台健康检查与实例重启**: `main.py` 中实现定期检查，并能重启不健康的 Automator 实例（从池中移除，关闭，创建新的补上）。
     3.  **监控与告警**:
-        *   集成 Prometheus 监控指标 (请求延迟、实例状态等)。
         *   关键错误时通过 `utils.py` 中的通知函数发送告警。
     4.  **测试覆盖**: 编写更全面的单元测试和集成测试 (`pytest-playwright`)。
     5.  API参数映射/动态选择器注入: 根据需求实现。
@@ -414,6 +420,7 @@ llm_sites:
 ## 7. 规范与最佳实践
 
 ### 7.1 日志规范与管理
+
 *   **格式：** `%(asctime)s - %(name)s - %(levelname)s - %(module)s:%(funcName)s:%(lineno)d - %(message)s`
 *   **级别：** DEBUG, INFO, WARNING, ERROR, CRITICAL。由 `config.yaml` 或 `.env` 控制。
 *   **输出：** 控制台 + 日志文件 (按大小/日期轮转)。
@@ -421,6 +428,7 @@ llm_sites:
 *   **日志清理**: `utils.py` 中的 `setup_logging` 函数配置 `logging.handlers.RotatingFileHandler` 时，必须设置 `backupCount` 参数（例如，`backupCount=10`），以自动限制保留的日志文件数量。
 
 ### 7.2 错误处理与快照
+
 *   在 `_perform_action` 和其他关键浏览器交互点进行 `try-except`。
 *   捕获 `playwright.sync_api.Error` (如 `TimeoutError`) 等。
 *   失败时：
@@ -430,6 +438,7 @@ llm_sites:
 *   API层面返回标准HTTP错误码和OpenAI格式的错误JSON。
 
 ### 7.3 安全注意事项 (Windows 本地)
+
 *   **Firefox Profile (`profiles/`)**: 包含登录凭证，目录权限应设为严格。在文档中强调。
 *   **`.env` 文件**: 存储敏感信息（API Key等），不应提交到版本库。
 *   **API 访问控制**:
@@ -438,6 +447,7 @@ llm_sites:
     *   在 `main.py` 中为所有 `/v1/*` 路径（或至少是修改配置的路径如 `/reload_config`）实现一个基于 HTTP `Authorization` Header 的简单 API Key 认证机制。API Key 在 `.env` 文件中配置 (e.g., `API_KEY="your_secret_key"`)。
 
 ### 7.4 测试策略与节奏
+
 *   **单元测试 (`pytest`)**:
     *   `config_manager.py`: 测试配置加载、解析、校验（有效/无效配置）。
     *   `models.py`: Pydantic模型校验逻辑。
@@ -448,6 +458,7 @@ llm_sites:
 *   **同步测试**: 在每个功能模块或重要特性开发完成后，立即编写并执行相关的单元测试和集成测试。测试应覆盖正常流程、边界条件和预期的错误场景。
 
 ### 7.5 依赖管理
+
 *   使用 `requirements.txt` (或 `pyproject.toml` 若使用 Poetry/PDM)。
 *   锁定主要依赖版本，以保证环境一致性。
 

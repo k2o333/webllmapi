@@ -1,46 +1,97 @@
-# Python项目通用.gitignore
-
-# 虚拟环境
+# =========================================
+# Python & Virtual Environments
+# =========================================
 venv/
 env/
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*.egg-info/
+build/
+dist/
+wheels/
+*.so
 
+# =========================================
+# Project-Specific Generated Files
+# =========================================
 # 日志文件
 logs/
 *.log
 
-# 浏览器缓存
-local_chatgpt_clone_profile/
+# 浏览器相关生成物
+# Playwright 会话和登录信息
+profiles/
+*_profile/
 
-# 测试相关
-pytest.ini
-__pycache__
-test_*.py
-*.pytest_cache*
+# Playwright 调试 traces
+traces/
 
-# IDE配置
+# 错误截图和DOM快照
+error_snapshots/
+
+# =========================================
+# Test Artifacts & Caches
+# =========================================
+# 测试报告和覆盖率数据
+test_results.txt
+.coverage
+htmlcov/
+nosetests.xml
+coverage.xml
+
+# 工具缓存
+.pytest_cache/
+.mypy_cache/
+
+# =========================================
+# Secrets & Local Configuration
+# (DO NOT commit these files)
+# =========================================
+# 环境变量文件，包含 API Keys 等敏感信息
+.env
+.env.*.local
+*.env
+
+# 本地配置文件（用于覆盖 config.yaml 中的某些设置，方便本地调试）
+config_local.yaml
+*_local.yaml
+
+# 你项目中的临时配置文件
+config1.yaml
+config2.yaml
+
+# =========================================
+# IDE / Editor Configuration
+# =========================================
 .vscode/
 .idea/
+*.sublime-project
+*.sublime-workspace
 
-# 系统文件
+# =========================================
+# OS-specific & Temporary Files
+# =========================================
+# macOS
 .DS_Store
+
+# Windows
 Thumbs.db
 
-# 配置文件（如果存在本地敏感配置）
-config_local.yaml
-
-# 临时文件
+# 临时文件和备份文件
 *.tmp
+*.bak
+*~
 *.swp
+*.swo
 
-# 打包文件
-*.zip
-*.tar.gz
+# =========================================
+# IMPORTANT CORRECTIONS
+# =========================================
+# 以下规则不应被忽略，它们是项目的重要组成部分
 
-# 浏览器缓存目录
-browser_cache/
+# [X] 不要忽略测试文件！它们是代码的一部分。
+# test_*.py
 
-.convert
+# [!] pytest.ini 通常是项目配置的一部分，应该被版本控制以确保测试一致性。
+# 如果你的 pytest.ini 包含个人路径或敏感信息，应将其重命名为 pytest_local.ini 并忽略后者。
+# pytest.ini

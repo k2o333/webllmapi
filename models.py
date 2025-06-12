@@ -1,8 +1,9 @@
+# models.py
 from enum import Enum
 from typing import Dict, List, Optional, Union, Any
-from pydantic import BaseModel, Field, field_validator, model_validator, HttpUrl
+from pydantic import BaseModel, Field, field_validator, model_validator, HttpUrl, ConfigDict
 
-# Enums
+# 枚举类型
 class LogLevel(str, Enum):
     DEBUG = "DEBUG"
     INFO = "INFO"
@@ -24,17 +25,17 @@ class HttpMethod(str, Enum):
     HEAD = "HEAD"
     OPTIONS = "OPTIONS"
 
-# OpenAI API Models
+# OpenAI API 模型
 class OpenAIMessage(BaseModel):
-    role: str = Field(..., description="The role of the message author (system, user, assistant)")
-    content: str = Field(..., description="The content of the message")
+    role: str = Field(..., description="消息作者的角色 (system, user, assistant)")
+    content: str = Field(..., description="消息内容")
 
     @field_validator('role')
     @classmethod
     def validate_role(cls, v: str) -> str:
         allowed_roles = ['system', 'user', 'assistant', 'function']
         if v not in allowed_roles:
-            raise ValueError(f"Role must be one of {allowed_roles}")
+            raise ValueError(f"角色必须是 {allowed_roles} 中的一个")
         return v
 
 class OpenAIFunctionParameter(BaseModel):
@@ -72,21 +73,21 @@ class OpenAIChatCompletionRequest(BaseModel):
     @classmethod
     def validate_temperature(cls, v: Optional[float]) -> Optional[float]:
         if v is not None and (v < 0 or v > 2):
-            raise ValueError("Temperature must be between 0 and 2")
+            raise ValueError("温度必须在 0 到 2 之间")
         return v
 
     @field_validator('top_p')
     @classmethod
     def validate_top_p(cls, v: Optional[float]) -> Optional[float]:
         if v is not None and (v < 0 or v > 1):
-            raise ValueError("Top_p must be between 0 and 1")
+            raise ValueError("Top_p 必须在 0 到 1 之间")
         return v
 
     @field_validator('presence_penalty', 'frequency_penalty')
     @classmethod
     def validate_penalty(cls, v: Optional[float]) -> Optional[float]:
         if v is not None and (v < -2 or v > 2):
-            raise ValueError("Penalty values must be between -2 and 2")
+            raise ValueError("惩罚值必须在 -2 到 2 之间")
         return v
 
 class OpenAIFunctionCall(BaseModel):
@@ -128,7 +129,7 @@ class OpenAIChatCompletionResponse(BaseModel):
     choices: List[OpenAIChatChoice]
     usage: OpenAIUsage
 
-# Configuration Models
+# 配置模型
 class ProxySettings(BaseModel):
     enabled: bool = False
     http_proxy: Optional[str] = None
@@ -164,10 +165,10 @@ class AuthConfig(BaseModel):
         auth_type = self.type
         if auth_type == AuthType.BASIC:
             if not self.username or not self.password:
-                raise ValueError("Username and password are required for basic auth")
+                raise ValueError("基本认证需要用户名和密码")
         elif auth_type == AuthType.BEARER:
             if not self.token:
-                raise ValueError("Token is required for bearer auth")
+                raise ValueError("Bearer 认证需要令牌")
         return self
 
 class RetryConfig(BaseModel):
@@ -187,9 +188,8 @@ class SiteConfig(BaseModel):
     @field_validator('base_url')
     @classmethod
     def validate_base_url(cls, v: str) -> str:
-        # Simple URL validation
         if not v.startswith(('http://', 'https://')):
-            raise ValueError("Base URL must start with http:// or https://")
+            raise ValueError("基础 URL 必须以 http:// 或 https:// 开头")
         return v
 
 class GlobalSettings(BaseModel):
@@ -200,8 +200,10 @@ class GlobalSettings(BaseModel):
     request_delay: float = 1.0
     concurrent_requests: int = 5
     user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    idle_instance_check_interval_seconds: int = Field(default=60, description="检查池中空闲浏览器实例的间隔时间（秒）。")
+    max_stale_instance_lifetime_seconds: int = Field(default=300, description="配置重载后，标记为过时的实例的最大生命周期（秒）。")
 
-# LLM Site Configuration Models
+# LLM 站点配置模型
 class ViewportConfig(BaseModel):
     width: int = 1920
     height: int = 1080
@@ -217,20 +219,23 @@ class StreamEndCondition(BaseModel):
     selector_key: Optional[str] = None
     stabilization_time_ms: Optional[int] = None
     timeout_seconds: Optional[int] = None
-    priority: int = 999  # 默认最低优先级
+    priority: int = 999
 
 class WaitStrategy(BaseModel):
     type: str
     selector_key: Optional[str] = None
+    attribute_name: Optional[str] = None
+    attribute_value: Optional[str] = None
 
 class ResponseHandling(BaseModel):
-    type: str  # "stream" or "full_text"
+    type: str
     stream_poll_interval_ms: int = 150
     stream_text_property: str = "textContent"
     stream_end_conditions: List[StreamEndCondition] = Field(default_factory=list)
     full_text_wait_strategy: List[WaitStrategy] = Field(default_factory=list)
     extraction_selector_key: str
     extraction_method: str = "innerText"
+    stream_error_handling: Optional[Dict[str, Any]] = None
 
 class OptionSync(BaseModel):
     id: str
@@ -238,7 +243,7 @@ class OptionSync(BaseModel):
     selector_key: str
     action: str
     target_value_on_page: Optional[str] = None
-    on_failure: str = "abort"  # "abort", "skip", "warn_and_skip"
+    on_failure: str = "abort"
 
 class HealthCheck(BaseModel):
     enabled: bool = True
@@ -246,6 +251,18 @@ class HealthCheck(BaseModel):
     timeout_seconds: int = 45
     failure_threshold: int = 3
     check_element_selector_key: str
+
+# 模型选择流程的新模型
+class ModelSelectionStep(BaseModel):
+    action: str = Field(default="click", description="要执行的操作，例如 'click'")
+    selector_key: str = Field(..., description="主 'selectors' 字典中目标元素对应的键")
+    description: Optional[str] = None
+    wait_after_ms: Optional[int] = Field(default=None, description="此操作后可选的延迟（毫秒）")
+
+class ModelVariantConfig(BaseModel):
+    id: str = Field(..., description="此模型变体的唯一 ID，用于 API 请求（例如 'deepseek-v3'）。这是 site_id/ 后面的部分")
+    name_on_page: Optional[str] = Field(default=None, description="页面上显示的人类可读名称，用于日志/参考。")
+    selection_flow: List[ModelSelectionStep] = Field(..., description="选择此模型变体的一系列操作。")
 
 class LLMSiteConfig(BaseModel):
     id: str
@@ -255,18 +272,26 @@ class LLMSiteConfig(BaseModel):
     firefox_profile_dir: str
     playwright_launch_options: PlaywrightLaunchOptions = Field(default_factory=PlaywrightLaunchOptions)
     use_stealth: bool = True
-    pool_size: int = 1
+    pool_size: int = Field(default=1, ge=1, description="此站点池的浏览器实例数。")
     max_requests_per_instance: int = 100
     max_memory_per_instance_mb: int = 1024
     selectors: Dict[str, str]
     backup_selectors: Optional[Dict[str, List[str]]] = None
     options_to_sync: List[OptionSync] = Field(default_factory=list)
+    
+    model_variants: Optional[List[ModelVariantConfig]] = Field(default=None, description="此站点上不同模型变体的配置以及如何选择它们。")
+    
     response_handling: ResponseHandling
     health_check: HealthCheck
-    mock_mode: bool = False  # <--- 添加了此字段并设置了默认值
+    mock_mode: bool = False
     mock_responses: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="Mock responses for testing purposes"
+        description="用于测试目的的模拟响应"
+    )
+
+    # 修正点：添加 model_config 以解决 Pydantic 警告
+    model_config = ConfigDict(
+        protected_namespaces=()
     )
 
 class AppConfig(BaseModel):
@@ -275,6 +300,8 @@ class AppConfig(BaseModel):
     proxy_settings: ProxySettings = Field(default_factory=ProxySettings)
     llm_sites: List[LLMSiteConfig] = Field(default_factory=list)
 
+class NotificationConfig(BaseModel):
+    log_only: bool = True
+
 # API 别名
 ChatCompletionRequest = OpenAIChatCompletionRequest
-ChatCompletionResponse = OpenAIChatCompletionResponse

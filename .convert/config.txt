@@ -14,7 +14,7 @@ output_filename=project_structure
 # These directories (and their contents) will be skipped wherever they are found
 # within the target object.
 # Example: exclude_dirs=.git,.venv,node_modules,__pycache__,build,dist,target
-exclude_dirs=.convert,.git,__pycache__,node_modules,target,build,dist,.mypy_cache,.pytest_cache,logs,local_chatgpt_clone_profile
+exclude_dirs=.convert,traces,.git,__pycache__,node_modules,target,build,dist,.mypy_cache,.pytest_cache,logs,local_chatgpt_clone_profile,profiles
 
 # Optional: Comma-separated list of specific FILES to exclude.
 # Provide FULL ABSOLUTE PATHS for these files.

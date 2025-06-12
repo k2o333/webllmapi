@@ -317,6 +317,158 @@ from .run_tests import run_tests
 __all__ = ['run_tests']
     ```
 
+    # cleanup.py
+    
+```
+import os
+import shutil
+import psutil
+import asyncio
+from pathlib import Path
+
+async def cleanup_test_environment():
+    """清理测试环境，删除所有测试相关的临时文件和进程"""
+    print("开始清理测试环境...")
+    
+    # 获取项目根目录
+    root_dir = Path(__file__).parent.parent
+    
+    # 清理 __pycache__ 目录
+    def clean_pycache(directory):
+        for root, dirs, files in os.walk(directory):
+            # 删除 __pycache__ 目录
+            if '__pycache__' in dirs:
+                pycache_path = os.path.join(root, '__pycache__')
+                print(f"删除 {pycache_path}")
+                shutil.rmtree(pycache_path, ignore_errors=True)
+            # 删除 .pyc 文件
+            for file in files:
+                if file.endswith('.pyc'):
+                    file_path = os.path.join(root, file)
+                    print(f"删除 {file_path}")
+                    os.remove(file_path)
+    
+    # 清理测试缓存目录
+    cache_dirs = [
+        '.pytest_cache',
+        '.mypy_cache',
+        '.coverage'
+    ]
+    
+    for cache_dir in cache_dirs:
+        cache_path = root_dir / cache_dir
+        if cache_path.exists():
+            print(f"删除缓存目录: {cache_path}")
+            shutil.rmtree(cache_path, ignore_errors=True)
+    
+    # 清理 Python 缓存文件
+    clean_pycache(root_dir)
+    
+    # 清理日志文件
+    logs_dir = root_dir / 'logs'
+    if logs_dir.exists():
+        for log_file in logs_dir.glob('*.log'):
+            print(f"删除日志文件: {log_file}")
+            log_file.unlink()
+    
+    # 终止可能残留的浏览器进程（根据需求只关闭Firefox）
+    browser_processes = ['firefox', 'playwright']
+    for proc in psutil.process_iter(['name']):
+        try:
+            for browser in browser_processes:
+                if browser in proc.info['name'].lower():
+                    print(f"终止进程: {proc.info['name']} (PID: {proc.pid})")
+                    proc.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+    
+    print("测试环境清理完成")
+
+def run_cleanup():
+    """运行清理程序"""
+    asyncio.run(cleanup_test_environment())
+
+if __name__ == "__main__":
+    run_cleanup()
+    ```
+
+    # run_stage4_tests.py
+    
+```
+import os
+import sys
+import time
+import pytest
+import asyncio
+from datetime import datetime
+from pathlib import Path
+
+# 添加项目根目录到Python路径
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# 导入清理模块
+from cleanup import run_cleanup
+
+def run_tests():
+    """运行阶段4测试并记录结果"""
+    # 记录开始时间
+    start_time = time.time()
+    start_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    print("="*80)
+    print(f"开始阶段4测试 - {start_datetime}")
+    print("="*80)
+    
+    # 首先清理环境
+    print("\n[1/3] 清理测试环境...")
+    run_cleanup()
+    
+    # 运行测试
+    print("\n[2/3] 运行阶段4测试...")
+    test_file = Path(__file__).parent / "test_stage4.py"
+    result = pytest.main(["-v", str(test_file)])
+    
+    # 计算测试时间
+    end_time = time.time()
+    duration = end_time - start_time
+    end_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # 准备测试结果摘要
+    print("\n[3/3] 生成测试报告...")
+    
+    # 获取测试结果文件路径
+    results_file = Path(__file__).parent / "test_results.txt"
+    
+    # 添加本次测试的结果到测试结果文件
+    with open(results_file, "a") as f:
+        f.write("\n\n")
+        f.write("="*80 + "\n")
+        f.write(f"测试执行摘要 - {end_datetime}\n")
+        f.write("="*80 + "\n")
+        f.write(f"开始时间: {start_datetime}\n")
+        f.write(f"结束时间: {end_datetime}\n")
+        f.write(f"测试持续时间: {duration:.2f} 秒\n")
+        f.write(f"测试结果代码: {result}\n")
+        f.write(f"测试状态: {'成功' if result == 0 else '失败'}\n")
+        f.write("="*80 + "\n")
+    
+    # 打印测试摘要
+    print("\n" + "="*80)
+    print(f"测试执行摘要")
+    print("="*80)
+    print(f"开始时间: {start_datetime}")
+    print(f"结束时间: {end_datetime}")
+    print(f"测试持续时间: {duration:.2f} 秒")
+    print(f"测试状态: {'成功' if result == 0 else '失败'}")
+    print("="*80)
+    print(f"\n测试结果已添加到: {results_file}")
+    
+    return result
+
+if __name__ == "__main__":
+    sys.exit(run_tests())
+    ```
+
     # run_tests.py
     
 ```
@@ -1838,6 +1990,175 @@ async def test_resource_monitoring():
     pytest.skip("第一阶段测试跳过 - 资源监控")
     ```
 
+    # test_stage4.py
+    
+```
+import pytest
+import asyncio
+import psutil
+from browser_handler import BrowserInstance, LLMWebsiteAutomator
+from models import LLMSiteConfig, StreamEndCondition, WaitStrategy, ResponseHandling, HealthCheck
+
+@pytest.fixture
+def mock_config():
+    """创建用于测试的模拟配置"""
+    return LLMSiteConfig(
+        id="test_site",
+        name="Test Site",
+        url="https://test.com",
+        firefox_profile_dir="./test_profile",
+        mock_mode=True,
+        max_requests_per_instance=5,
+        max_memory_per_instance_mb=500,
+        selectors={
+            "input_area": "#input",
+            "submit_button": "#submit",
+            "response_area": "#response",
+            "health_check_element": "#health"
+        },
+        response_handling=ResponseHandling(
+            type="streaming",
+            extraction_selector_key="response_area",
+            stream_end_conditions=[
+                StreamEndCondition(
+                    type="element_present",
+                    selector_key="response_area",
+                    timeout_seconds=30
+                )
+            ],
+            full_text_wait_strategy=[
+                WaitStrategy(
+                    type="element_visible",
+                    selector_key="response_area"
+                )
+            ]
+        ),
+        health_check=HealthCheck(
+            enabled=True,
+            check_element_selector_key="health_check_element"
+        )
+    )
+
+@pytest.mark.asyncio
+async def test_browser_instance_memory_monitoring():
+    """测试浏览器实例的内存监控功能"""
+    # 创建一个模拟的浏览器实例
+    browser_instance = BrowserInstance(None, None, psutil.Process().pid, is_mock=False)
+    
+    # 测试内存使用量获取
+    memory_usage = await browser_instance.get_memory_usage()
+    assert isinstance(memory_usage, float)
+    assert memory_usage > 0
+
+    # 清理
+    await browser_instance.cleanup()
+
+@pytest.mark.asyncio
+async def test_browser_instance_request_counting():
+    """测试浏览器实例的请求计数功能"""
+    # 创建一个模拟的浏览器实例
+    browser_instance = BrowserInstance(None, None, None, is_mock=True)
+    
+    # 初始请求计数应为0
+    assert browser_instance.request_count == 0
+    
+    # 模拟增加请求计数
+    browser_instance.request_count += 1
+    assert browser_instance.request_count == 1
+
+    # 清理
+    await browser_instance.cleanup()
+
+@pytest.mark.asyncio
+async def test_browser_instance_recycling(mock_config):
+    """测试浏览器实例的回收机制"""
+    automator = LLMWebsiteAutomator(mock_config)
+    await automator.initialize()
+    
+    # 确保初始化完成
+    assert await automator.is_healthy()
+    
+    # 发送多个请求以触发回收条件
+    for i in range(mock_config.max_requests_per_instance):
+        response = await automator.send_message("test message")
+        assert response is not None
+    
+    # 验证实例是否应该被回收
+    assert automator.should_recycle_based_on_metrics() == True
+    
+    # 清理
+    await automator.cleanup()
+
+@pytest.mark.asyncio
+async def test_memory_usage_monitoring(mock_config):
+    """测试内存使用监控功能"""
+    automator = LLMWebsiteAutomator(mock_config)
+    await automator.initialize()
+    
+    # 确保初始化完成
+    assert await automator.is_healthy()
+    
+    # 确保mock实例的内存使用值是浮点数
+    if automator.managed_browser_instance and automator.managed_browser_instance.is_mock:
+        automator.managed_browser_instance.mock_memory_usage = 50.0
+    
+    # 测试内存使用量获取
+    memory_usage = await automator.get_memory_usage()
+    assert isinstance(memory_usage, float)
+    
+    # 清理
+    await automator.cleanup()
+
+@pytest.mark.asyncio
+async def test_request_count_tracking(mock_config):
+    """测试请求数量跟踪功能"""
+    automator = LLMWebsiteAutomator(mock_config)
+    await automator.initialize()
+    
+    # 确保初始化完成
+    assert await automator.is_healthy()
+    
+    # 初始请求计数应为0
+    assert automator.get_request_count() == 0
+    
+    # 发送一条消息并检查请求计数
+    response = await automator.send_message("test message")
+    assert response is not None
+    assert automator.get_request_count() == 1
+    
+    # 清理
+    await automator.cleanup()
+
+@pytest.mark.asyncio
+async def test_instance_health_check(mock_config):
+    """测试实例健康检查功能"""
+    automator = LLMWebsiteAutomator(mock_config)
+    await automator.initialize()
+    
+    # 测试健康检查
+    is_healthy = await automator.is_healthy()
+    assert is_healthy == True
+    
+    # 清理
+    await automator.cleanup()
+
+@pytest.mark.asyncio
+async def test_cleanup_and_resource_release(mock_config):
+    """测试清理和资源释放功能"""
+    automator = LLMWebsiteAutomator(mock_config)
+    await automator.initialize()
+    
+    # 执行清理
+    await automator.cleanup()
+    
+    # 验证清理后的状态
+    assert automator.managed_browser_instance is None
+    assert automator._playwright_instance is None
+
+if __name__ == "__main__":
+    pytest.main(["-v", "test_stage4.py"])
+    ```
+
     # test_streaming.py
     
 ```
@@ -2132,17 +2453,18 @@ async def test_streaming_cancellation(automator):
 # API Keys
 OPENAI_API_KEY=your_openai_api_key_here
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
+API_KEY="sk-1234" # Key for accessing sensitive endpoints like /reload_config
 
 # Proxy Settings (optional)
 HTTP_PROXY=
 HTTPS_PROXY=
 
 # Logging
-LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+LOG_LEVEL=DEBUG  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 
 # Application Settings
 PORT=8000
-HOST=127.0.0.1
+HOST=0.0.0.0
   ```
 
   # .env.example
@@ -2162,6 +2484,59 @@ LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 # Application Settings
 PORT=8000
 HOST=127.0.0.1
+  ```
+
+  # .gitignore
+  
+```
+# Python项目通用.gitignore
+
+# 虚拟环境
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 日志文件
+logs/
+*.log
+
+# 浏览器缓存
+local_chatgpt_clone_profile/
+
+# 测试相关
+pytest.ini
+__pycache__
+test_*.py
+*.pytest_cache*
+
+# IDE配置
+.vscode/
+.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 配置文件（如果存在本地敏感配置）
+config_local.yaml
+
+# 临时文件
+*.tmp
+*.swp
+
+# 打包文件
+*.zip
+*.tar.gz
+
+# 浏览器缓存目录
+browser_cache/
+
+.convert/
+
+.env
   ```
 
   # browser_automator.py
@@ -2345,6 +2720,8 @@ class BrowserAutomator:
   # browser_handler.py
   
 ```
+# browser_handler.py
+
 import asyncio
 import logging
 import psutil
@@ -2352,530 +2729,645 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union, AsyncGenerator
-from playwright.async_api import async_playwright, Browser, Page, ElementHandle
-from tenacity import retry, stop_after_attempt, wait_exponential
+from playwright.async_api import async_playwright, Browser, Page, ElementHandle, BrowserContext
+from tenacity import retry, stop_after_attempt, wait_exponential, RetryError
 
-from models import LLMSiteConfig, StreamEndCondition, WaitStrategy
+from models import LLMSiteConfig, StreamEndCondition, WaitStrategy, ModelVariantConfig, ModelSelectionStep
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("wrapper_api.browser_handler") # 【次要修改】统一使用分层 logger
 
 class BrowserInstance:
     """管理单个浏览器实例的类"""
-    def __init__(self, browser: Optional[Browser], page: Optional[Page], is_mock: bool = False):
-        self.browser = browser
+    def __init__(self, browser_context: Optional[BrowserContext], page: Optional[Page], browser_pid: Optional[int] = None, is_mock: bool = False):
+        self.browser_context = browser_context
         self.page = page
+        self.browser_pid = browser_pid
         self.request_count = 0
         self.last_request_time = 0
         self.creation_time = time.time()
-        self.process = psutil.Process() if not is_mock else None
+        self.process = psutil.Process(browser_pid) if browser_pid and psutil.pid_exists(browser_pid) else None
         self.is_available = True
         self.is_mock = is_mock
-        
+        self.firefox_profile_dir_path: Optional[Path] = None
+
     async def get_memory_usage(self) -> float:
-        """获取当前浏览器实例的内存使用量（MB）"""
-        try:
-            return self.process.memory_info().rss / (1024 * 1024)
-        except Exception as e:
-            logger.warning(f"Failed to get memory usage: {e}")
-            return 0.0
-        
-    def should_recycle(self, max_requests: int, max_memory_mb: int) -> bool:
-        """检查浏览器实例是否需要回收"""
-        if self.request_count >= max_requests:
+        if self.is_mock:
+            return getattr(self, 'mock_memory_usage', 50.0)
+        if self.process:
+            try:
+                return self.process.memory_info().rss / (1024 * 1024)
+            except psutil.NoSuchProcess:
+                logger.warning(f"Browser process with PID {self.browser_pid} not found for memory usage check.")
+                self.process = None
+                return 0.0
+            except Exception as e:
+                logger.warning(f"Failed to get memory usage for PID {self.browser_pid}: {e}")
+                return 0.0
+        return 0.0
+
+    async def should_recycle(self, max_requests: int, max_memory_mb: int) -> bool:
+        if self.is_mock:
+            return self.request_count >= max_requests if max_requests > 0 else False
+
+        if max_requests > 0 and self.request_count >= max_requests:
+            logger.info(f"Instance (PID: {self.browser_pid}) should recycle: request count {self.request_count} >= {max_requests}")
             return True
-            
-        try:
-            memory_usage = self.process.memory_info().rss / (1024 * 1024)
+
+        memory_usage = await self.get_memory_usage()
+        if max_memory_mb > 0 and memory_usage > 0:
             if memory_usage > max_memory_mb:
+                logger.info(f"Instance (PID: {self.browser_pid}) should recycle: memory usage {memory_usage:.2f}MB > {max_memory_mb}MB")
                 return True
-        except Exception as e:
-            logger.warning(f"Failed to check memory usage: {e}")
-            
+        elif max_memory_mb > 0 and self.process is None:
+            logger.warning(f"Instance (PID: {self.browser_pid}) cannot check memory for recycle, process not available. Skipping memory check.")
+
         return False
-        
+
     async def cleanup(self):
-        """清理浏览器实例"""
+        logger.info(f"Cleaning up BrowserInstance (PID: {self.browser_pid}, Mock: {self.is_mock})")
         try:
             if not self.is_mock:
-                if self.page:
+                if self.page and not self.page.is_closed():
                     await self.page.close()
-                if self.browser:
-                    await self.browser.close()
+                if self.browser_context:
+                    await self.browser_context.close()
             self.is_available = False
         except Exception as e:
-            logger.error(f"Error during browser cleanup: {e}")
+            logger.error(f"Error during BrowserInstance cleanup (PID: {self.browser_pid}): {e}")
+
 
 class LLMWebsiteAutomator:
-    """LLM网站自动化处理类"""
     def __init__(self, config: LLMSiteConfig):
         self.config = config
-        self.browser_pool: List[BrowserInstance] = []
-        self.lock = asyncio.Lock()
-        self.health_check_task: Optional[asyncio.Task] = None
-        self.last_health_check = 0
-        self.consecutive_failures = 0
-        self._initialized = False
-        
+        self.managed_browser_instance: Optional[BrowserInstance] = None
+        self._playwright_instance = None
+        self._initialized_event = asyncio.Event()
+
     async def initialize(self):
-        """初始化浏览器实例池"""
+        if self.managed_browser_instance:
+            logger.warning(f"Automator for {self.config.id} already initialized.")
+            await self.cleanup()
+
+        logger.info(f"Initializing LLMWebsiteAutomator for site: {self.config.id} (Mock: {self.config.mock_mode})")
         try:
-            for _ in range(self.config.pool_size):
-                instance = await self._create_browser_instance()
-                self.browser_pool.append(instance)
-            
-            # 启动健康检查任务
-            if self.config.health_check.enabled:
-                self.health_check_task = asyncio.create_task(self._health_check_loop())
-                
+            self.managed_browser_instance = await self._create_single_browser_instance()
+            self._initialized_event.set()
+            logger.info(f"LLMWebsiteAutomator for {self.config.id} initialized successfully.")
         except Exception as e:
-            logger.error(f"Failed to initialize browser pool: {e}")
+            logger.error(f"Failed to initialize LLMWebsiteAutomator for {self.config.id}: {e}", exc_info=True)
+            self._initialized_event.clear()
             raise
-            
-    async def _create_browser_instance(self) -> BrowserInstance:
-        """创建新的浏览器实例"""
-        if hasattr(self.config, 'mock_responses'):
-            # Mock模式返回虚拟实例
-            mock_instance = BrowserInstance(None, None, is_mock=True)
-            # 添加mock资源监控属性
-            mock_instance.mock_memory_usage = 100  # 模拟内存使用
-            return mock_instance
-            
+
+    async def _create_single_browser_instance(self) -> BrowserInstance:
+        if self.config.mock_mode:
+            logger.info(f"Creating MOCK browser instance for {self.config.id}")
+            mock_bi = BrowserInstance(browser_context=None, page=None, browser_pid=None, is_mock=True)
+            mock_bi.mock_memory_usage = 50
+            return mock_bi
+
+        logger.info(f"Creating REAL browser instance for {self.config.id}")
+        playwright_obj = None
+        browser_context_obj = None
+
         try:
-            playwright = await async_playwright().start()
+            logger.info(f"[{self.config.id}] Starting Playwright...")
+            playwright_obj = await async_playwright().start()
+            self._playwright_instance = playwright_obj
+            logger.info(f"[{self.config.id}] Playwright started successfully.")
+
+            profile_path_str = self.config.firefox_profile_dir
+            profile_path = Path(profile_path_str)
+            if not profile_path.is_absolute():
+                profile_path = Path.cwd() / profile_path_str
             
-            # 使用临时用户数据目录
-            user_data_dir = tempfile.mkdtemp(prefix="firefox_profile_")
+            if not profile_path.exists():
+                logger.warning(f"[{self.config.id}] Profile directory not found at {profile_path}. Creating it.")
+                profile_path.mkdir(parents=True, exist_ok=True)
+            else:
+                logger.info(f"[{self.config.id}] Using existing profile directory at {profile_path}")
+
+            user_data_dir = str(profile_path)
             
-            # 获取启动选项
             launch_options = self.config.playwright_launch_options.model_dump(exclude_none=True)
-            
-            # 启动浏览器上下文
-            browser = await playwright.firefox.launch_persistent_context(
+            if 'viewport' in launch_options and launch_options['viewport'] is None:
+                del launch_options['viewport']
+
+            logger.info(f"[{self.config.id}] Launching Firefox persistent context with options: {launch_options} and user_data_dir: {user_data_dir}")
+            browser_context_obj = await playwright_obj.firefox.launch_persistent_context(
                 user_data_dir,
                 **launch_options
             )
+            logger.info(f"[{self.config.id}] Firefox persistent context launched.")
             
-            # 创建新页面
-            page = browser.pages[0] if browser.pages else await browser.new_page()
+            browser_pid = None
+            page = browser_context_obj.pages[0] if browser_context_obj.pages else await browser_context_obj.new_page()
             
-            # 设置视口大小
-            await page.set_viewport_size({'width': 1920, 'height': 1080})
-            
-            # 导航到目标URL (添加重试逻辑)
-            try:
-                await page.goto(self.config.url, timeout=15000)
-            except Exception as e:
-                logger.warning(f"首次导航失败: {e}, 重试...")
-                await page.goto(self.config.url, timeout=15000)
-            
-            # 配置 Stealth 模式
+            if self.config.playwright_launch_options.viewport:
+                 await page.set_viewport_size(self.config.playwright_launch_options.viewport.model_dump())
+
             if self.config.use_stealth:
+                logger.info(f"[{self.config.id}] Setting up stealth mode.")
                 await self._setup_stealth_mode(page)
-            
-            # 导航到目标URL
-            await page.goto(self.config.url)
-            
-            # 同步页面选项
+
+            logger.info(f"Navigating to URL: {self.config.url} for {self.config.id}")
+            try:
+                await page.goto(self.config.url, timeout=60000, wait_until="domcontentloaded")
+            except Exception as e:
+                logger.warning(f"Initial navigation to {self.config.url} failed: {e}. Retrying...")
+                await asyncio.sleep(2)
+                await page.goto(self.config.url, timeout=60000, wait_until="domcontentloaded")
+            logger.info(f"[{self.config.id}] Successfully navigated to {self.config.url}")
+
             await self._sync_page_options(page)
             
-            return BrowserInstance(browser, page)
-            
+            bi = BrowserInstance(browser_context_obj, page, browser_pid, is_mock=False)
+            bi.firefox_profile_dir_path = profile_path
+            return bi
         except Exception as e:
-            logger.error(f"Failed to create browser instance: {e}")
+            logger.error(f"Failed to create REAL browser instance for {self.config.id}: {e}", exc_info=True)
+            if browser_context_obj: await browser_context_obj.close()
+            if playwright_obj and self._playwright_instance:
+                 await self._playwright_instance.stop()
+                 self._playwright_instance = None
             raise
-            
+
     async def _setup_stealth_mode(self, page: Page):
-        """设置浏览器隐身模式"""
-        # 实现浏览器指纹隐藏等功能
-        await page.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => false,
-            });
-        """)
-        
+        await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+
     async def _sync_page_options(self, page: Page):
-        """同步页面选项配置"""
-        for option in self.config.options_to_sync:
+        if not self.config.options_to_sync:
+            return
+        logger.info(f"Syncing general page options for {self.config.id}...")
+        for option_sync_config in self.config.options_to_sync:
+            selector = self.config.selectors.get(option_sync_config.selector_key)
+            if not selector:
+                logger.warning(f"Selector key '{option_sync_config.selector_key}' not found for option sync '{option_sync_config.id}'. Skipping.")
+                continue
             try:
-                selector = self.config.selectors[option.selector_key]
-                
-                if option.action == "select_by_value":
-                    await page.select_option(selector, option.target_value_on_page)
-                elif option.action == "click_if_not_active":
+                if option_sync_config.action == "select_by_value":
+                    await page.select_option(selector, value=option_sync_config.target_value_on_page, timeout=10000)
+                elif option_sync_config.action == "click_if_not_active":
                     element = await page.query_selector(selector)
-                    if element:
-                        await element.click()
-                        
+                    if element: await element.click(timeout=10000)
+                logger.info(f"Successfully synced general option: {option_sync_config.id}")
             except Exception as e:
-                if option.on_failure == "abort":
-                    raise
-                elif option.on_failure == "warn_and_skip":
-                    logger.warning(f"Failed to sync option {option.id}: {e}")
-                    
-    async def _get_available_instance(self) -> BrowserInstance:
-        """获取可用的浏览器实例"""
-        async with self.lock:
-            # 查找可用实例
-            for instance in self.browser_pool:
-                if not instance.should_recycle(
-                    self.config.max_requests_per_instance,
-                    self.config.max_memory_per_instance_mb
-                ) and instance.is_available:
-                    return instance
-                    
-            # 如果没有可用实例，回收并创建新实例
-            old_instance = self.browser_pool.pop(0)
-            await old_instance.cleanup()
+                logger.error(f"Failed to sync general option '{option_sync_config.id}' with selector '{selector}': {e}")
+                if option_sync_config.on_failure == "abort": raise
+                elif option_sync_config.on_failure == "warn_and_skip": logger.warning(f"Skipping option sync for '{option_sync_config.id}'.")
+
+    async def _execute_model_selection_flow(self, target_model_variant_id: str, page: Page):
+        if not self.config.model_variants:
+            logger.debug(f"[{self.config.id}] No model_variants configured. Skipping model selection.")
+            return
+
+        selected_variant: Optional[ModelVariantConfig] = None
+        for variant in self.config.model_variants:
+            if variant.id == target_model_variant_id:
+                selected_variant = variant
+                break
+        
+        if not selected_variant:
+            logger.warning(f"[{self.config.id}] Model variant '{target_model_variant_id}' not found in configuration. Skipping specific model selection.")
+            return
+
+        logger.info(f"[{self.config.id}] Executing model selection flow for variant '{target_model_variant_id}' ({selected_variant.name_on_page or ''}).")
+        
+        for step_idx, step in enumerate(selected_variant.selection_flow):
+            logger.debug(f"[{self.config.id}] Model selection step {step_idx + 1}/{len(selected_variant.selection_flow)}: {step.action} on '{step.selector_key}' (Desc: {step.description or 'N/A'})")
+            selector_str = self.config.selectors.get(step.selector_key)
+            if not selector_str:
+                logger.error(f"[{self.config.id}] Selector_key '{step.selector_key}' not found in main selectors for model selection step. Aborting flow.")
+                raise RuntimeError(f"Missing selector_key '{step.selector_key}' for model selection on {self.config.id}")
+
+            try:
+                element_to_interact = await page.query_selector(selector_str)
+                if not element_to_interact:
+                    logger.debug(f"[{self.config.id}] Element '{step.selector_key}' not immediately found, waiting...")
+                    try:
+                        await page.wait_for_selector(selector_str, state="visible", timeout=15000) 
+                        element_to_interact = await page.query_selector(selector_str)
+                    except Exception as wait_e:
+                         logger.warning(f"[{self.config.id}] Timeout waiting for element '{step.selector_key}': {wait_e}")
+                         element_to_interact = None
+
+                if not element_to_interact:
+                    logger.error(f"[{self.config.id}] Element for selector '{step.selector_key}' (Selector: {selector_str}) not found/visible for model selection step.")
+                    raise RuntimeError(f"Element not found for model selection step '{step.selector_key}' on {self.config.id}")
+
+                if step.action == "click":
+                    await element_to_interact.click(timeout=10000)
+                    logger.debug(f"[{self.config.id}] Clicked element for '{step.selector_key}'.")
+                else:
+                    logger.warning(f"[{self.config.id}] Unsupported action '{step.action}' in model selection flow. Skipping step.")
+
+                if step.wait_after_ms:
+                    logger.debug(f"[{self.config.id}] Waiting for {step.wait_after_ms}ms after action on '{step.selector_key}'.")
+                    await asyncio.sleep(step.wait_after_ms / 1000.0)
             
-            new_instance = await self._create_browser_instance()
-            self.browser_pool.append(new_instance)
-            return new_instance
-            
+            except Exception as e:
+                logger.error(f"[{self.config.id}] Error during model selection step for '{step.selector_key}' (Selector: {selector_str}): {e}", exc_info=True)
+                raise RuntimeError(f"Failed model selection step for {self.config.id}/{target_model_variant_id}: {e}") from e
+        
+        logger.info(f"[{self.config.id}] Model selection flow for variant '{target_model_variant_id}' completed.")
+
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=10)
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True
     )
-    async def send_message(self, message: str) -> Union[str, AsyncGenerator[str, None]]:        
-        """发送消息并获取响应"""
-        if hasattr(self.config, 'mock_responses'):
-            # Mock模式
-            instance = await self._get_available_instance()
-            instance.request_count += 1
-            instance.last_request_time = time.time()
-            instance.is_available = False
-
-            try:
-                mock_responses = self.config.mock_responses
-                default_response = mock_responses.get('default', {})
-                
-                # 处理mock错误
-                if default_response.get('is_error', False):
-                    raise Exception(default_response.get('error_message', 'Mock error'))
-                    
-                # 处理mock超时
-                if default_response.get('is_timeout', False):
-                    await asyncio.sleep(default_response['timeout_ms'] / 1000)
-                    raise asyncio.TimeoutError("Mock timeout")
-
-                if self.config.response_handling.type == "stream":
-                    # 创建并返回异步生成器
-                    chunks = default_response.get('streaming', ['Mock chunk'])
-                    async def mock_stream_wrapper():
-                        try:
-                            async for chunk in self._mock_stream(chunks):
-                                yield chunk
-                        finally:
-                            instance.is_available = True
-                    return mock_stream_wrapper()
-                else:
-                    await asyncio.sleep(0.2)
-                    result = default_response.get('text', 'Mock response')
-                    instance.is_available = True
-                    return result
-            except Exception as e:
-                instance.is_available = True
-                raise
-
-        # 非mock模式的实现
-        instance = await self._get_available_instance()
-        instance.request_count += 1
-        instance.last_request_time = time.time()
-        instance.is_available = False
+    async def send_message(self, message: str, target_model_variant_id: Optional[str] = None) -> Union[str, AsyncGenerator[str, None]]:
+        if not self.managed_browser_instance:
+            raise RuntimeError(f"Automator for {self.config.id} is not properly initialized or browser instance is missing.")
         
-        try:
-            # 定位并填充输入框
-            input_selector = self.config.selectors["input_area"]
-            await instance.page.fill(input_selector, message)
-            
-            # 点击发送按钮
-            submit_selector = self.config.selectors["submit_button"]
-            await instance.page.click(submit_selector)
-            
+        if self.managed_browser_instance.is_mock:
+            self.managed_browser_instance.request_count += 1
+            self.managed_browser_instance.last_request_time = time.time()
+            mock_responses_config = self.config.mock_responses or {}
+            default_response = mock_responses_config.get('default', {})
+            if default_response.get('is_error', False): raise Exception(default_response.get('error_message', 'Mock error'))
+            if default_response.get('is_timeout', False):
+                await asyncio.sleep(default_response.get('timeout_ms', 100) / 1000)
+                raise asyncio.TimeoutError("Mock timeout")
             if self.config.response_handling.type == "stream":
-                async def real_stream_wrapper():
-                    try:
-                        async for chunk in self._handle_streaming_response(instance.page):
-                            yield chunk
-                    finally:
-                        instance.is_available = True
-                return real_stream_wrapper()
+                chunks = default_response.get('streaming', ['Mock chunk 1\n', 'Mock chunk 2\n', 'Mock chunk 3\n'])
+                async def mock_stream_wrapper():
+                    for chunk in chunks:
+                        await asyncio.sleep(0.05)
+                        yield chunk
+                return mock_stream_wrapper()
             else:
-                result = await self._handle_full_response(instance.page)
-                instance.is_available = True
-                return result
-                
-        except Exception as e:
-            instance.is_available = True
-            logger.error(f"Error sending message: {e}")
-            raise
+                await asyncio.sleep(0.05)
+                return default_response.get('text', 'Mock full response')
 
-    async def _mock_stream(self, chunks: List[str]) -> AsyncGenerator[str, None]:
-        """生成mock流式响应"""
-        for chunk in chunks:
-            await asyncio.sleep(0.1)
-            yield chunk
-            
-    async def _handle_streaming_response(self, page: Page) -> AsyncGenerator[str, None]:
-        """处理流式响应"""
-        last_text = ""
-        stabilization_start = None
-        start_time = time.time()
-        bytes_yielded = 0
-        retry_count = 0
-        
+        page = self.managed_browser_instance.page
+        self.managed_browser_instance.request_count += 1
+        self.managed_browser_instance.last_request_time = time.time()
+
+        logger.debug(f"[{self.config.id}] ENTERING send_message method.")
+
         try:
-            while True:
-                try:
-                    # 检查所有结束条件
-                    end_conditions = sorted(
-                        self.config.response_handling.stream_end_conditions,
-                        key=lambda x: x.priority
-                    )
+            logger.debug(f"[{self.config.id}] Step 1: Syncing page options...")
+            await self._sync_page_options(page)
+            logger.debug(f"[{self.config.id}] Step 1: Page options sync complete.")
+
+            if target_model_variant_id:
+                logger.debug(f"[{self.config.id}] Step 2: Executing model selection for '{target_model_variant_id}'...")
+                await self._execute_model_selection_flow(target_model_variant_id, page)
+                logger.debug(f"[{self.config.id}] Step 2: Model selection complete.")
+
+            input_selector = self.config.selectors["input_area"]
+            submit_selector = self.config.selectors["submit_button"]
+
+            logger.debug(f"[{self.config.id}] Step 3: Attempting to fill input area with selector: {input_selector}")
+            await page.fill(input_selector, message, timeout=20000)
+            logger.debug(f"[{self.config.id}] Step 3: Successfully filled input area.")
+
+            logger.debug(f"[{self.config.id}] Step 4: Attempting to find submit button with selector: {submit_selector}")
+            submit_button_element = await page.query_selector(submit_selector)
+            if not submit_button_element:
+                logger.error(f"[{self.config.id}] FAILED to find submit button element. It's None.")
+                raise RuntimeError(f"Submit button '{submit_selector}' not found on {self.config.id}")
+            logger.debug(f"[{self.config.id}] Step 4: Found submit button element. Is enabled? {await submit_button_element.is_enabled()}")
+
+            if await submit_button_element.is_disabled():
+                logger.warning(f"[{self.config.id}] Submit button is disabled. Waiting briefly...")
+                await asyncio.sleep(0.5)
+                if await submit_button_element.is_disabled():
+                    logger.error(f"[{self.config.id}] Submit button remained disabled.")
+                    raise RuntimeError(f"Submit button '{submit_selector}' remained disabled on {self.config.id}")
+
+            logger.debug(f"[{self.config.id}] Step 5: Attempting to click submit button.")
+            await submit_button_element.click(timeout=20000)
+            logger.debug(f"[{self.config.id}] Step 5: Clicked submit button successfully.")
+
+            if self.config.response_handling.type == "stream":
+                logger.info(f"[{self.config.id}] Starting to handle streaming response...")
+                return self._handle_streaming_response(page)
+            else:
+                logger.info(f"[{self.config.id}] Starting to handle full response...")
+                return await self._handle_full_response(page)
+        except Exception as e:
+            logger.error(f"[{self.config.id}] EXCEPTION in send_message: {e}", exc_info=True)
+            error_snapshot_dir = Path("error_snapshots")
+            error_snapshot_dir.mkdir(exist_ok=True)
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            try:
+                if page and not page.is_closed():
+                    screenshot_path = error_snapshot_dir / f"{self.config.id}_{timestamp}_error.png"
+                    await page.screenshot(path=screenshot_path)
+                    logger.info(f"Saved error screenshot to {screenshot_path}")
+            except Exception as se:
+                logger.error(f"Failed to save error screenshot: {se}")
+            raise RetryError(f"Final attempt failed for send_message on {self.config.id}: {e}")
+
+    async def _handle_streaming_response(self, page: Page) -> AsyncGenerator[str, None]:
+        last_text = ""
+        bytes_yielded = 0
+        response_area_selector = self.config.selectors[self.config.response_handling.extraction_selector_key]
+        text_property = self.config.response_handling.stream_text_property
+        
+        # 【核心修改】1. 初始化流状态，增加 'thinking_indicator_seen'
+        stream_state = {
+            '_stream_start_time': time.time(),
+            'thinking_indicator_seen': False
+        }
+        logger.debug(f"[{self.config.id}] Streaming from selector '{response_area_selector}', property '{text_property}'")
+
+        # 【核心修改】2. 增加一个小的初始延迟，让页面有时间加载“思考中”指示器
+        await asyncio.sleep(0.5)
+
+        loop_count = 0
+        while True:
+            try:
+                loop_count += 1
+
+                # 【核心修改】3. 在检查结束条件前，先检查“思考中”指示器是否已出现
+                # 这段代码会找到 'element_disappears' 类型的条件，并检查其选择器对应的元素是否可见
+                # 如果可见，它会将 'thinking_indicator_seen' 状态翻转为 True
+                thinking_indicator_condition = next((c for c in self.config.response_handling.stream_end_conditions if c.type == "element_disappears"), None)
+                if thinking_indicator_condition and not stream_state['thinking_indicator_seen']:
+                    thinking_selector = self.config.selectors.get(thinking_indicator_condition.selector_key)
+                    if thinking_selector:
+                        # 使用短超时检查，因为它在循环中
+                        is_visible = await page.is_visible(thinking_selector, timeout=50)
+                        if is_visible:
+                            stream_state['thinking_indicator_seen'] = True
+                            logger.info(f"[{self.config.id}] 'thinking_indicator' 已出现。现在开始监控其消失。")
+
+                # 检查所有结束条件
+                sorted_end_conditions = sorted(
+                    self.config.response_handling.stream_end_conditions,
+                    key=lambda c: c.priority
+                )
+                should_end_stream = False
+                for condition in sorted_end_conditions:
+                    if await self._check_stream_end_condition(page, condition, last_text, stream_state):
+                        should_end_stream = True
+                        break
+                if should_end_stream:
+                    logger.info(f"[{self.config.id}] Stream loop ended by a condition on iteration {loop_count}.")
+                    break
+
+                # 每次循环都尝试获取元素
+                element = await page.query_selector(response_area_selector)
+
+                logger.debug(f"[{self.config.id}] Stream loop #{loop_count}: Element found? {'Yes' if element else 'No'}")
+
+                current_text = ""
+                if element:
+                    if text_property == "textContent": current_text = await element.text_content() or ""
+                    elif text_property == "innerText": current_text = await element.inner_text() or ""
+                    elif text_property == "innerHTML": current_text = await element.inner_html() or ""
+                    else:
+                        logger.warning(f"Unsupported stream_text_property: {text_property}. Defaulting to text_content.")
+                        current_text = await element.text_content() or ""
                     
-                    for condition in end_conditions:
-                        if await self._check_stream_end_condition(page, condition, last_text):
-                            logger.info(
-                                f"Streaming response completed after {time.time()-start_time:.2f}s, "
-                                f"{bytes_yielded} bytes transferred"
-                            )
-                            return
-                            
-                    # 获取当前响应文本
-                    selector = self.config.selectors[self.config.response_handling.extraction_selector_key]
-                    element = await page.query_selector(selector)
-                    if not element:
-                        continue
-                        
-                    current_text = await element.get_property(
-                        self.config.response_handling.stream_text_property
-                    )
-                    current_text = await current_text.json_value()
-                    
-                    # 如果有新内容，yield差异部分
-                    if current_text != last_text:
-                        new_content = current_text[len(last_text):]
+                    logger.debug(f"[{self.config.id}] Stream loop #{loop_count}: Extracted text (len {len(current_text)}): '{current_text[:150]}...'")
+                
+                if current_text != last_text:
+                    new_content = current_text[len(last_text):]
+                    if new_content:
+                        logger.info(f"[{self.config.id}] >>> Yielding new chunk (len {len(new_content)}): '{new_content[:100]}...'")
                         bytes_yielded += len(new_content.encode('utf-8'))
                         yield new_content
                         last_text = current_text
-                        stabilization_start = None
-                        retry_count = 0  # 成功获取内容后重置重试计数
-                    elif stabilization_start is None:
-                        stabilization_start = time.time()
-                        
-                    await asyncio.sleep(self.config.response_handling.stream_poll_interval_ms / 1000)
-                    
-                except Exception as e:
-                    retry_count += 1
-                    logger.warning(f"Streaming error (attempt {retry_count}): {e}")
-                    
-                    # 检查是否超过最大重试次数
-                    if retry_count >= self.config.response_handling.stream_error_handling.max_retries:
-                        if self.config.response_handling.stream_error_handling.fallback_to_full_response:
-                            logger.warning("Falling back to full response due to streaming errors")
-                            full_response = await self._handle_full_response(page)
-                            yield full_response[len(last_text):]
-                        raise
-                        
-                    # 等待重试延迟
-                    await asyncio.sleep(
-                        self.config.response_handling.stream_error_handling.retry_delay_ms / 1000
-                    )
-                    
-        finally:
-            # 记录性能指标
-            duration = time.time() - start_time
-            logger.info(
-                f"Streaming session stats - Duration: {duration:.2f}s, "
-                f"Bytes: {bytes_yielded}, Throughput: {bytes_yielded/duration:.2f} B/s"
-            )
-            
-            # 确保实例在流式响应结束后被标记为可用
-            instance = next((i for i in self.browser_pool if i.page == page), None)
-            if instance:
-                instance.is_available = True
-                
+                        stream_state['_text_stable_since'] = None
+                elif '_text_stable_since' not in stream_state or stream_state['_text_stable_since'] is None:
+                     stream_state['_text_stable_since'] = time.time()
+
+                await asyncio.sleep(self.config.response_handling.stream_poll_interval_ms / 1000)
+            except Exception as e:
+                logger.error(f"Error during streaming for {self.config.id}: {e}", exc_info=True)
+                break
+        
+        duration = time.time() - stream_state['_stream_start_time']
+        logger.info(
+            f"[{self.config.id}] Streaming response finished. Duration: {duration:.2f}s, "
+            f"Bytes: {bytes_yielded}, Throughput: {bytes_yielded/duration if duration > 0 else 0:.2f} B/s"
+        )
+
     async def _check_stream_end_condition(
-        self,
-        page: Page,
-        condition: StreamEndCondition,
-        current_text: str
+        self, page: Page, condition: StreamEndCondition, current_text: str, stream_state: Dict[str, Any]
     ) -> bool:
-        """检查流式响应是否结束"""
+        result = False
         try:
             if condition.type == "element_disappears":
-                selector = self.config.selectors[condition.selector_key]
-                element = await page.query_selector(selector)
-                return element is None
-                
-            elif condition.type == "text_stabilized":
-                if not current_text:
-                    return False
-                if not hasattr(self, '_text_stable_since'):
-                    self._text_stable_since = time.time()
-                elif time.time() - self._text_stable_since >= condition.stabilization_time_ms / 1000:
-                    return True
-                return False
-                
-            elif condition.type == "timeout":
-                if not hasattr(self, '_stream_start_time'):
-                    self._stream_start_time = time.time()
-                return time.time() - self._stream_start_time >= condition.timeout_seconds
-                
-        except Exception as e:
-            logger.error(f"Error checking stream end condition: {e}")
-            return False
-            
-    async def _handle_full_response(self, page: Page) -> str:
-        """处理完整响应"""
-        # 等待响应完成
-        for strategy in self.config.response_handling.full_text_wait_strategy:
-            if strategy.type == "element_disappears":
-                selector = self.config.selectors[strategy.selector_key]
-                await page.wait_for_selector(selector, state="hidden")
-            elif strategy.type == "element_contains_text_or_is_not_empty":
-                selector = self.config.selectors[strategy.selector_key]
-                await page.wait_for_selector(selector)
-                
-        # 提取响应文本
-        selector = self.config.selectors[self.config.response_handling.extraction_selector_key]
-        element = await page.query_selector(selector)
-        if not element:
-            raise ValueError(f"Response element not found: {selector}")
-            
-        text = await element.get_property(self.config.response_handling.extraction_method)
-        return await text.json_value()
-        
-    async def _health_check_loop(self):
-        """健康检查循环"""
-        while True:
-            try:
-                await asyncio.sleep(self.config.health_check.interval_seconds)
-                await self._perform_health_check()
-            except Exception as e:
-                logger.error(f"Error in health check loop: {e}")
-                
-    async def _perform_health_check(self):
-        """执行健康检查"""
-        try:
-            instance = await self._get_available_instance()
-            selector = self.config.selectors[self.config.health_check.check_element_selector_key]
-            
-            # 设置超时
-            async with asyncio.timeout(self.config.health_check.timeout_seconds):
-                element = await instance.page.wait_for_selector(selector)
-                if element:
-                    self.consecutive_failures = 0
-                    self.last_health_check = time.time()
-                    return
-                    
-            self.consecutive_failures += 1
-            
-            # 如果连续失败次数超过阈值，重新初始化实例
-            if self.consecutive_failures >= self.config.health_check.failure_threshold:
-                logger.warning("Health check failed, reinitializing browser pool")
-                await self.cleanup()
-                await self.initialize()
-                
-        except Exception as e:
-            logger.error(f"Health check failed: {e}")
-            self.consecutive_failures += 1
-            
-    async def cleanup(self):
-        """清理所有浏览器实例"""
-        if self.health_check_task:
-            self.health_check_task.cancel()
-            
-        for instance in self.browser_pool:
-            await instance.cleanup()
-        self.browser_pool.clear()
+                # 【核心修改】4. 增加状态检查：只有在指示器出现过之后，才检查它是否消失
+                if not stream_state.get('thinking_indicator_seen', False):
+                    return False  # 如果指示器从未出现过，此条件不能触发，防止提前退出
 
-    # 新增方法
-    async def send_prompt_and_get_response(self, prompt: str, stream_callback=None) -> Union[str, AsyncGenerator[str, None]]:
-        """发送提示并获取响应，支持流式回调"""
-        start_time = time.time()
-        
-        if getattr(self.config, 'mock_mode', False):
-            # Mock模式返回预定义响应
-            mock_responses = getattr(self.config, 'mock_responses', {})
-            default_response = mock_responses.get('default', {}).get('text', 'Mock response')
-            
-            # 模拟流式响应延迟
-            if mock_responses.get('default', {}).get('streaming') and stream_callback:
-                # 如果提供了流式回调，模拟流式响应
-                chunks = mock_responses.get('default', {}).get('streaming', ['Mock chunk'])
-                for chunk in chunks:
-                    await asyncio.sleep(0.1)  # 模拟网络延迟
-                    await stream_callback(chunk)
-                return ''.join(chunks)
+                if not condition.selector_key: return False
+                selector = self.config.selectors.get(condition.selector_key)
+                if not selector: return False
+                
+                # 现在检查元素是否已隐藏或不存在
+                result = await page.is_hidden(selector, timeout=100)
+
+            elif condition.type == "element_appears":
+                if not condition.selector_key: return False
+                selector = self.config.selectors.get(condition.selector_key)
+                if not selector: return False
+                result = await page.is_visible(selector, timeout=100)
+            elif condition.type == "text_stabilized":
+                if not condition.stabilization_time_ms: return False
+                stable_since = stream_state.get('_text_stable_since')
+                if stable_since and (time.time() - stable_since) * 1000 >= condition.stabilization_time_ms:
+                    logger.debug(f"[{self.config.id}] End condition check: Text stabilized for {condition.stabilization_time_ms} ms.")
+                    result = True
+            elif condition.type == "timeout":
+                if not condition.timeout_seconds: return False
+                start_time = stream_state.get('_stream_start_time', time.time())
+                if (time.time() - start_time) >= condition.timeout_seconds:
+                    logger.debug(f"[{self.config.id}] End condition check: Stream timeout of {condition.timeout_seconds}s reached.")
+                    result = True
             else:
-                await asyncio.sleep(0.5)  # 模拟网络延迟
-                return default_response
-            
+                logger.warning(f"Unknown stream end condition type: {condition.type}")
+        except Exception as e:
+            logger.error(f"Error checking stream end condition {condition.type} for {self.config.id}: {e}")
+            result = False
+
+        if result:
+            logger.info(f"[{self.config.id}] >>> Stream END CONDITION MET: {condition.model_dump_json()}")
+        return result
+
+    async def _handle_full_response(self, page: Page) -> str:
+        logger.info(f"[{self.config.id}] Waiting for full response elements...")
+        extraction_selector = self.config.selectors[self.config.response_handling.extraction_selector_key]
+        extraction_method = self.config.response_handling.extraction_method
+
+        if self.config.response_handling.full_text_wait_strategy:
+            for strategy_idx, strategy in enumerate(self.config.response_handling.full_text_wait_strategy):
+                try:
+                    strategy_selector_key = strategy.selector_key
+                    if not strategy_selector_key:
+                        logger.warning(f"[{self.config.id}] Wait strategy {strategy_idx} missing selector_key: {strategy.type}. Skipping.")
+                        continue
+                    
+                    strat_selector = self.config.selectors.get(strategy_selector_key)
+                    if not strat_selector:
+                        logger.warning(f"[{self.config.id}] Selector for wait strategy key '{strategy_selector_key}' not found. Skipping.")
+                        continue
+
+                    logger.debug(f"[{self.config.id}] Applying wait strategy: {strategy.type} with selector {strat_selector}")
+                    wait_timeout = 30000 
+                    if strategy.type == "element_disappears":
+                        await page.wait_for_selector(strat_selector, state="hidden", timeout=wait_timeout)
+                    elif strategy.type == "element_appears":
+                         await page.wait_for_selector(strat_selector, state="visible", timeout=wait_timeout)
+                    elif strategy.type == "element_contains_text_or_is_not_empty":
+                         await page.wait_for_function(f"""
+                            () => {{
+                                const el = document.querySelector('{strat_selector.replace("'", "\\'")}');
+                                return el && (el.textContent || el.innerText || '').trim() !== '';
+                            }}
+                         """, timeout=wait_timeout)
+                    elif strategy.type == "element_attribute_equals":
+                        attribute_name = getattr(strategy, 'attribute_name', None)
+                        attribute_value = getattr(strategy, 'attribute_value', None)
+                        if attribute_name is None or attribute_value is None:
+                            logger.warning(f"Wait strategy 'element_attribute_equals' missing attribute_name or attribute_value. Skipping.")
+                            continue
+                        await page.wait_for_function(f"""
+                            () => {{
+                                const el = document.querySelector('{strat_selector.replace("'", "\\'")}');
+                                return el && el.getAttribute('{attribute_name}') === '{attribute_value}';
+                            }}
+                        """, timeout=wait_timeout)
+                    logger.debug(f"[{self.config.id}] Wait strategy satisfied: {strategy.type}")
+                except Exception as e:
+                    logger.warning(f"[{self.config.id}] Timeout or error waiting for strategy {strategy.type} (selector: {strat_selector}): {e}")
+        
+        logger.info(f"[{self.config.id}] Extracting text from {extraction_selector} using {extraction_method}")
+        element = await page.query_selector(extraction_selector)
+        if not element:
+            logger.warning(f"[{self.config.id}] Response element '{extraction_selector}' not found immediately. Waiting briefly...")
+            await asyncio.sleep(1)
+            element = await page.query_selector(extraction_selector)
+            if not element:
+                logger.error(f"[{self.config.id}] Response element not found: {extraction_selector}")
+                raise ValueError(f"Response element not found: {extraction_selector} on site {self.config.id}")
+
+        text_content = ""
+        if extraction_method == "textContent": text_content = await element.text_content() or ""
+        elif extraction_method == "innerText": text_content = await element.inner_text() or ""
+        elif extraction_method == "innerHTML": text_content = await element.inner_html() or ""
+        else:
+            logger.warning(f"Unsupported extraction_method: {extraction_method}. Defaulting to text_content.")
+            text_content = await element.text_content() or ""
+        
+        logger.info(f"[{self.config.id}] Full response extracted. Length: {len(text_content)}")
+        return text_content.strip()
+
+    async def send_prompt_and_get_response(self, prompt: str, stream_callback=None, target_model_variant_id: Optional[str] = None) -> Union[str, AsyncGenerator[str, None]]:
+        await self._initialized_event.wait()
+        start_time = time.time()
+        logger.info(f"[{self.config.id}] Processing prompt (len {len(prompt)}): {prompt[:50]}... (Stream: {bool(stream_callback)}, Variant: {target_model_variant_id or 'Default'})")
+
         try:
-            # 记录开始时间
-            logger.info(f"Starting prompt processing: {prompt[:50]}...")
-            
-            # 发送消息并获取响应
-            response = await self.send_message(prompt)
-            
-            # 如果提供了流式回调，直接返回异步生成器
-            if stream_callback and hasattr(response, '__aiter__'):
+            response_or_generator = await self.send_message(prompt, target_model_variant_id=target_model_variant_id)
+            if stream_callback and hasattr(response_or_generator, '__aiter__'):
+                logger.info(f"[{self.config.id}] Returning stream_wrapper for callback processing.")
                 async def stream_wrapper():
-                    full_response = ""
+                    full_response_text = ""
                     chunk_count = 0
                     total_bytes = 0
-                    
                     try:
-                        async for chunk in response:
+                        async for chunk in response_or_generator:
+                            await stream_callback(chunk)
+                            full_response_text += chunk
                             chunk_count += 1
                             total_bytes += len(chunk.encode('utf-8'))
-                            full_response += chunk
-                            await stream_callback(chunk)
                             yield chunk
-                            
-                        # 记录流式响应性能指标
                         duration = time.time() - start_time
                         logger.info(
-                            f"Completed streaming response in {duration:.2f}s, "
-                            f"{chunk_count} chunks, {total_bytes} bytes, "
-                            f"avg {total_bytes/duration:.2f} bytes/s"
+                            f"[{self.config.id}] Streaming with callback completed. Duration: {duration:.2f}s, "
+                            f"Chunks: {chunk_count}, Bytes: {total_bytes}, "
+                            f"Avg Throughput: {total_bytes/duration if duration > 0 else 0:.2f} B/s"
                         )
                     except Exception as e:
-                        logger.error(f"Error in stream processing: {e}")
+                        logger.error(f"[{self.config.id}] Error in stream_wrapper: {e}", exc_info=True)
                         raise
-                        
                 return stream_wrapper()
-            
-            # 如果是字符串响应或没有回调，直接返回完整响应
-            if isinstance(response, str):
-                logger.info(f"Completed non-streaming response in {time.time() - start_time:.2f}s")
-                return response
+            elif isinstance(response_or_generator, str):
+                duration = time.time() - start_time
+                logger.info(f"[{self.config.id}] Non-streaming response received. Duration: {duration:.2f}s, Length: {len(response_or_generator)}")
+                return response_or_generator
+            elif hasattr(response_or_generator, '__aiter__'):
+                logger.info(f"[{self.config.id}] Collecting non-callback stream response...")
+                full_response_text_list = []
+                async for chunk in response_or_generator: full_response_text_list.append(chunk)
+                full_response_text = "".join(full_response_text_list)
+                duration = time.time() - start_time
+                logger.info(f"[{self.config.id}] Collected non-callback stream. Duration: {duration:.2f}s, Length: {len(full_response_text)}")
+                return full_response_text
             else:
-                # 收集所有内容
-                full_response = ""
-                async for chunk in response:
-                    full_response += chunk
-                
-                logger.info(f"Collected full streaming response in {time.time() - start_time:.2f}s")
-                return full_response
+                logger.error(f"[{self.config.id}] Unexpected response type from send_message: {type(response_or_generator)}")
+                raise TypeError("Unexpected response type from send_message")
+        except RetryError as e:
+            logger.error(f"[{self.config.id}] All retry attempts failed for prompt: {prompt[:50]}. Error: {e.last_attempt.exception()}", exc_info=True)
+            raise
         except Exception as e:
-            logger.error(f"Error getting response for prompt: {e}")
+            logger.error(f"[{self.config.id}] Unhandled error processing prompt: {prompt[:50]}. Error: {e}", exc_info=True)
             raise
 
     async def is_healthy(self) -> bool:
-        """检查当前automator是否健康"""
-        try:
-            # 使用健康检查逻辑
-            selector = self.config.selectors[self.config.health_check.check_element_selector_key]
-            instance = await self._get_available_instance()
-            
-            async with asyncio.timeout(self.config.health_check.timeout_seconds):
-                element = await instance.page.wait_for_selector(selector)
-                return element is not None
-                
-        except Exception as e:
-            logger.warning(f"Health check failed: {e}")
+        await self._initialized_event.wait()
+        if not self.managed_browser_instance or self.managed_browser_instance.is_mock:
+            logger.debug(f"[{self.config.id}] Health check: Instance is mock or not present. Assuming healthy for mock.")
+            return True
+        if not self.managed_browser_instance.page or self.managed_browser_instance.page.is_closed():
+            logger.warning(f"[{self.config.id}] Health check: Page is None or closed.")
             return False
+
+        page = self.managed_browser_instance.page
+        hc_config = self.config.health_check
+        try:
+            title = await page.title()
+            if not title:
+                logger.warning(f"[{self.config.id}] Health check: Page title is empty.")
+                return False
+            logger.debug(f"[{self.config.id}] Health check: Page title: {title}")
+
+            hc_element_selector_key = hc_config.check_element_selector_key
+            hc_selector = self.config.selectors.get(hc_element_selector_key)
+            if not hc_selector:
+                logger.warning(f"Health check: HC selector key '{hc_element_selector_key}' not in selectors.")
+                return False
+
+            logger.debug(f"[{self.config.id}] Health check: Waiting for element '{hc_selector}' (timeout: {hc_config.timeout_seconds}s)")
+            await page.wait_for_selector(hc_selector, state="visible", timeout=hc_config.timeout_seconds * 1000)
+            
+            logger.info(f"[{self.config.id}] Health check: PASSED.")
+            return True
+        except Exception as e:
+            logger.warning(f"[{self.config.id}] Health check: FAILED. Error: {e}")
+            return False
+
+    async def cleanup(self):
+        logger.info(f"Cleaning up LLMWebsiteAutomator for {self.config.id}...")
+        if self.managed_browser_instance:
+            await self.managed_browser_instance.cleanup()
+            self.managed_browser_instance = None
+        if self._playwright_instance:
+            try:
+                await self._playwright_instance.stop()
+                logger.info(f"Playwright instance stopped for {self.config.id}.")
+            except Exception as e: logger.error(f"Error stopping Playwright for {self.config.id}: {e}")
+            finally: self._playwright_instance = None
+        self._initialized_event.clear()
+
+    def get_request_count(self) -> int:
+        return self.managed_browser_instance.request_count if self.managed_browser_instance else 0
+
+    async def get_memory_usage(self) -> float:
+        return await self.managed_browser_instance.get_memory_usage() if self.managed_browser_instance else 0.0
+
+    async def should_recycle_based_on_metrics(self) -> bool:
+        if not self.managed_browser_instance: return False
+        return await self.managed_browser_instance.should_recycle(
+            self.config.max_requests_per_instance,
+            self.config.max_memory_per_instance_mb
+        )
   ```
 
   # browser_handler.py.bak
@@ -3219,15 +3711,271 @@ class LLMWebsiteAutomator:
         self.browser_pool.clear()
   ```
 
+  # call_api.py
+  
+```
+import requests
+import json
+import argparse
+import os
+from typing import Optional
+
+def call_chat_completion_api(
+    model_id: str,
+    prompt: str,
+    api_key: str,
+    stream: bool = False,
+    api_base_url: str = "http://localhost:8000"
+):
+    """
+    调用本地的 LLM 网页自动化 API。
+
+    Args:
+        model_id (str): 配置中 LLM 站点的 ID (例如 "wenxiaobai")，
+                        或站点 ID/模型变体 ID (例如 "wenxiaobai/deepseek-v3")。
+        prompt (str): 要发送给 LLM 的用户提示。
+        api_key (str): 访问 API 的密钥 (与 .env 中的 API_KEY 对应)。
+        stream (bool): 如果为 True，则启用流式响应。
+        api_base_url (str): 本地 API 服务的基地址。
+    """
+    url = f"{api_base_url}/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-KEY": api_key
+    }
+
+    messages = [{"role": "user", "content": prompt}]
+
+    data = {
+        "model": model_id,
+        "messages": messages,
+        "stream": stream
+    }
+
+    print(f"\n--- 调用 API ---")
+    print(f"URL: {url}")
+    print(f"模型: {model_id} (流式: {stream})")
+    print(f"提示: {prompt[:50]}...")
+    print(f"----------------\n")
+
+    try:
+        if stream:
+            # 流式请求
+            full_response_content = ""
+            with requests.post(url, headers=headers, json=data, stream=True) as response:
+                response.raise_for_status() # 检查 HTTP 错误，如果状态码不是 2xx 则抛出异常
+
+                print("流式响应:")
+                for line in response.iter_lines():
+                    if line:
+                        decoded_line = line.decode('utf-8')
+                        
+                        if decoded_line.startswith("data:"):
+                            json_data_str = decoded_line[len("data:"):].strip()
+                            
+                            if json_data_str == "[DONE]":
+                                break # 流结束标记
+                            
+                            try:
+                                chunk = json.loads(json_data_str)
+                                content = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                if content:
+                                    print(content, end='', flush=True) # 实时打印内容
+                                    full_response_content += content
+                            except json.JSONDecodeError:
+                                print(f"\n[API 响应解析错误] 无法解析 JSON 行: {json_data_str}")
+                                # 可以根据需要记录更详细的错误
+                print("\n\n流式响应结束。")
+                print(f"总计接收字符: {len(full_response_content)}")
+
+        else:
+            # 非流式请求
+            response = requests.post(url, headers=headers, json=data)
+            response.raise_for_status() # 检查 HTTP 错误
+
+            print("非流式响应:")
+            print(json.dumps(response.json(), indent=2, ensure_ascii=False))
+
+    except requests.exceptions.HTTPError as e:
+        print(f"\n[HTTP 错误] 请求失败: {e}")
+        if e.response is not None:
+            print(f"服务器响应: {e.response.text}")
+    except requests.exceptions.ConnectionError as e:
+        print(f"\n[连接错误] 无法连接到服务器。请确保您的 FastAPI 服务已运行在 {api_base_url}。错误: {e}")
+    except requests.exceptions.Timeout as e:
+        print(f"\n[超时错误] 请求超时。错误: {e}")
+    except requests.exceptions.RequestException as e:
+        print(f"\n[未知请求错误] 发生未知请求错误: {e}")
+    except Exception as e:
+        print(f"\n[意外错误] 发生意外错误: {e}")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="调用本地 LLM 网页自动化 API")
+    parser.add_argument("--model", "-m", type=str, required=True,
+                        help="LLM 站点 ID 或 '站点ID/模型变体ID' (例如: 'wenxiaobai' 或 'wenxiaobai/deepseek-v3')")
+    parser.add_argument("--prompt", "-p", type=str, required=True,
+                        help="发送给 LLM 的用户提示")
+    parser.add_argument("--stream", "-s", action="store_true",
+                        help="启用流式响应 (默认为非流式)")
+    parser.add_argument("--api-key", "-k", type=str,
+                        help="API 密钥 (如果未提供，将尝试从环境变量 API_KEY 获取)")
+    parser.add_argument("--url", "-u", type=str, default="http://localhost:8000",
+                        help="本地 API 服务的基地址 (默认为 http://localhost:8000)")
+
+    args = parser.parse_args()
+
+    # 如果命令行未提供 API 密钥，则尝试从环境变量获取
+    api_key_to_use = args.api_key
+    if not api_key_to_use:
+        api_key_to_use = os.getenv("API_KEY")
+        if not api_key_to_use:
+            print("错误: 未提供 API 密钥。请通过 --api-key 参数提供，或在 .env 文件中设置 API_KEY 环境变量。", file=os.sys.stderr)
+            os.sys.exit(1)
+
+    call_chat_completion_api(
+        model_id=args.model,
+        prompt=args.prompt,
+        api_key=api_key_to_use,
+        stream=args.stream,
+        api_base_url=args.url
+    )
+  ```
+
   # config.yaml
   
 ```
 # Global settings for all sites
 global_settings:
-  timeout: 30  # Default timeout in seconds
+  timeout: 60
+  max_retries: 3
+  retry_delay: 5
+  log_level: "DEBUG"
+  request_delay: 0.5 # Default delay after actions like clicking 'new chat' (in seconds)
+  concurrent_requests: 5
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+  idle_instance_check_interval_seconds: 60
+  max_stale_instance_lifetime_seconds: 300
+
+# API configurations
+api_settings:
+  openai:
+    model: "gpt-3.5-turbo"
+    temperature: 0.7
+    max_tokens: 2000
+    top_p: 1.0
+    frequency_penalty: 0.0
+    presence_penalty: 0.0
+  anthropic:
+    model: "claude-2"
+    temperature: 0.7
+    max_tokens: 2000
+
+# Proxy settings
+proxy_settings:
+  enabled: false
+  http_proxy: ""
+  https_proxy: ""
+  bypass_list: []
+
+# LLM sites configuration
+llm_sites:
+  - id: "wenxiaobai"
+    name: "闻小AI (wenxiaobai.com)"
+    enabled: true
+    url: "https://www.wenxiaobai.com/"
+    firefox_profile_dir: "profiles/wenxiaobai_profile"
+    playwright_launch_options:
+      headless: false
+      viewport:
+        width: 1920
+        height: 1080
+    use_stealth: true
+    pool_size: 1
+    max_requests_per_instance: 100
+    max_memory_per_instance_mb: 1024
+
+    selectors:
+      new_chat_button: "xpath=//div[contains(@class, 'NewChat_left') and .//span[normalize-space()='新对话']]"
+      input_area: "xpath=//textarea[@placeholder='给 小白 发送消息']"
+      submit_button: "xpath=//div[@class='MsgInput_icon_container__4burH']//*[name()='svg']"
+      response_markdown_body_last_assistant: "xpath=(//div[contains(@class, 'markdown-body') and @data-sentry-component='Markdown' and @data-sentry-source-file='index.tsx'])[1]"
+      thinking_indicator: 'xpath=//*[@id="chat_turn_container"]//div[contains(@class, "loading-title") and normalize-space(.)="思考中..."]'
+      model_selection_popup_trigger: "xpath=//div[contains(@class, 'PopupItem_btn_act__') and contains(@data-key, 'deepseek') and .//div[contains(@class, 'PopupItem_btn_msg__')]]"
+      wenxiaobai_deepseek_v3_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='日常问答（V3）']]"
+      wenxiaobai_deepseek_r1_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='深度思考（R1）']]"
+      wenxiaobai_qwen3_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='千问 3']]"
+      response_container_general: "xpath=(//div[contains(@class, 'Answser_answer_body_content')])[1]"
+      last_response_options_trigger: "xpath=//*[@id='chat_turn_container']//div[starts-with(@class, 'TurnCard_right_opts') and contains(@class, 'TurnCard_more_opts_show')]"
+      health_check_element: "xpath=//textarea[@placeholder='给 小白 发送消息']"
+
+    model_variants:
+      - id: "deepseek-v3"
+        name_on_page: "日常问答（V3）"
+        selection_flow:
+          - selector_key: "model_selection_popup_trigger"
+            description: "Click to open model selection popup"
+            wait_after_ms: 500
+          - selector_key: "wenxiaobai_deepseek_v3_choice"
+            description: "Select DeepSeek V3 model"
+            wait_after_ms: 200
+      - id: "deepseek-r1"
+        name_on_page: "深度思考（R1）"
+        selection_flow:
+          - selector_key: "model_selection_popup_trigger"
+            wait_after_ms: 500
+          - selector_key: "wenxiaobai_deepseek_r1_choice"
+            wait_after_ms: 200
+      - id: "qwen3"
+        name_on_page: "千问 3"
+        selection_flow:
+          - selector_key: "model_selection_popup_trigger"
+            wait_after_ms: 500
+          - selector_key: "wenxiaobai_qwen3_choice"
+            wait_after_ms: 200
+
+    options_to_sync: []
+
+    response_handling:
+      type: "stream"
+      stream_poll_interval_ms: 200
+      stream_text_property: "textContent"
+      extraction_selector_key: "response_markdown_body_last_assistant"
+      extraction_method: "innerText"
+
+      stream_end_conditions:
+        - type: "element_disappears"
+          selector_key: "thinking_indicator"
+          priority: 0
+        - type: "text_stabilized"
+          stabilization_time_ms: 2500
+          priority: 1
+        - type: "timeout"
+          timeout_seconds: 180
+          priority: 2
+
+      full_text_wait_strategy:
+        - type: "element_disappears"
+          selector_key: "thinking_indicator"
+        - type: "element_contains_text_or_is_not_empty"
+          selector_key: "response_markdown_body_last_assistant"
+
+    health_check:
+      enabled: true
+      interval_seconds: 300
+      timeout_seconds: 60
+      failure_threshold: 3
+      check_element_selector_key: "health_check_element"
+  ```
+
+  # config1.yaml
+  
+```
+# Global settings for all sites
+global_settings:
+  timeout: 60  # Default timeout in seconds
   max_retries: 3  # Default number of retries
   retry_delay: 5  # Delay between retries in seconds
-  log_level: "INFO"
+  log_level: "debug"
   request_delay: 1.0  # Delay between requests in seconds
   concurrent_requests: 5  # Maximum number of concurrent requests
   user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -3255,13 +4003,13 @@ proxy_settings:
 
 # LLM sites configuration
 llm_sites:
-  - id: "local-chatgpt-clone"
-    name: "Local ChatGPT Clone Interface"
+  - id: "wenxiaobai.com"
+    name: "wenxiaobai.com"
     enabled: true
-    url: "http://localhost:3000/chat"
+    url: "https://www.wenxiaobai.com/"
 
     # Firefox Profile 配置
-    firefox_profile_dir: "local_chatgpt_clone_profile"
+    firefox_profile_dir: "wenxiaobai.com_profile"
 
     # Playwright 浏览器启动选项
     playwright_launch_options:
@@ -3280,12 +4028,12 @@ llm_sites:
 
     # CSS 选择器
     selectors:
-      input_area: "textarea#prompt-textarea"
-      submit_button: "button[data-testid='send-message-button']"
-      response_container: "div.chat-messages-container"
-      last_response_message: "div.chat-messages-container > div.message-bubble[data-role='assistant']:last-child"
-      streaming_response_target: "div.chat-messages-container > div.message-bubble[data-role='assistant']:last-child > div.content"
-      thinking_indicator: "div.spinner-overlay.active"
+      input_area: "//textarea[@placeholder='给 小白 发送消息']"
+      submit_button: "//div[@class='MsgInput_icon_container__4burH']//*[name()='svg']"
+      response_container: "(//div[contains(@class, "Answser_answer_body_content")])[1]"
+      last_response_message: "//*[@id="chat_turn_container"]//div[starts-with(@class, 'TurnCard_right_opts') and contains(@class, 'TurnCard_more_opts_show')]"
+      streaming_response_target: "(//div[@id='chat_turn_container']//div[contains(@class, 'markdown-body') and @data-sentry-component='Markdown'])[1]"
+      thinking_indicator: 'xpath=//*[@id="chat_turn_container"]//div[contains(@class, "loading-title") and normalize-space(.)="思考中..."]'
       model_selector_dropdown: "select#model-selector"
       theme_toggle_dark: "button#theme-toggle[aria-label='Switch to dark theme']"
 
@@ -3356,18 +4104,149 @@ llm_sites:
       check_element_selector_key: "input_area"
   ```
 
+  # config2.yaml
+  
+```
+# Global settings for all sites
+global_settings:
+  timeout: 60
+  max_retries: 3
+  retry_delay: 5
+  log_level: "DEBUG" 
+  request_delay: 0.5 # Default delay after actions like clicking 'new chat' (in seconds)
+  concurrent_requests: 5
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+  idle_instance_check_interval_seconds: 60
+  max_stale_instance_lifetime_seconds: 300
+
+# API configurations
+api_settings:
+  openai:
+    model: "gpt-3.5-turbo"
+    temperature: 0.7
+    max_tokens: 2000
+    top_p: 1.0
+    frequency_penalty: 0.0
+    presence_penalty: 0.0
+  anthropic:
+    model: "claude-2"
+    temperature: 0.7
+    max_tokens: 2000
+
+# Proxy settings
+proxy_settings:
+  enabled: false
+  http_proxy: ""
+  https_proxy: ""
+  bypass_list: []
+
+# LLM sites configuration
+llm_sites:
+  - id: "wenxiaobai" 
+    name: "闻小AI (wenxiaobai.com)"
+    enabled: true
+    url: "https://www.wenxiaobai.com/"
+    firefox_profile_dir: "profiles/wenxiaobai_profile"
+    # You can add site-specific request_delay if needed, e.g.:
+    # request_delay: 0.8 
+    playwright_launch_options:
+      headless: false 
+      viewport:
+        width: 1920
+        height: 1080
+    use_stealth: true
+    pool_size: 1
+    max_requests_per_instance: 100
+    max_memory_per_instance_mb: 1024
+
+    selectors:
+      new_chat_button: "xpath=//div[contains(@class, 'NewChat_left') and .//span[normalize-space()='新对话']]"
+      input_area: "xpath=//textarea[@placeholder='给 小白 发送消息']"
+      submit_button: "xpath=//div[@class='MsgInput_icon_container__4burH']//*[name()='svg']"
+      response_markdown_body_last_assistant: "xpath=(//div[contains(@class, 'markdown-body') and @data-sentry-component='Markdown' and @data-sentry-source-file='index.tsx'])[1]"
+      thinking_indicator: "xpath=(//*[@id="chat_turn_container"]//div[contains(@class, "loading-title") and normalize-space(.)="思考中..."])[1]"
+      model_selection_popup_trigger: "xpath=//div[contains(@class, 'PopupItem_btn_act__') and contains(@data-key, 'deepseek') and .//div[contains(@class, 'PopupItem_btn_msg__')]]"
+      wenxiaobai_deepseek_v3_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='日常问答（V3）']]"
+      wenxiaobai_deepseek_r1_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='深度思考（R1）']]"
+      wenxiaobai_qwen3_choice:       "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='千问 3']]"
+      response_container_general: "xpath=(//div[contains(@class, 'Answser_answer_body_content')])[1]" 
+      last_response_options_trigger: "xpath=(//*[@id='chat_turn_container']//div[starts-with(@class, 'TurnCard_right_opts') and contains(@class, 'TurnCard_more_opts_show')])[1]"
+      health_check_element: "xpath=//textarea[@placeholder='给 小白 发送消息']"
+
+    model_variants:
+      - id: "deepseek-v3"
+        name_on_page: "日常问答（V3）"
+        selection_flow:
+          - selector_key: "model_selection_popup_trigger"
+            description: "Click to open model selection popup"
+            wait_after_ms: 500
+          - selector_key: "wenxiaobai_deepseek_v3_choice"
+            description: "Select DeepSeek V3 model"
+            wait_after_ms: 200
+      - id: "deepseek-r1"
+        name_on_page: "深度思考（R1）"
+        selection_flow:
+          - selector_key: "model_selection_popup_trigger"
+            wait_after_ms: 500
+          - selector_key: "wenxiaobai_deepseek_r1_choice"
+            wait_after_ms: 200
+      - id: "qwen3"
+        name_on_page: "千问 3"
+        selection_flow:
+          - selector_key: "model_selection_popup_trigger"
+            wait_after_ms: 500
+          - selector_key: "wenxiaobai_qwen3_choice"
+            wait_after_ms: 200
+            
+    options_to_sync: []
+
+    response_handling:
+      type: "stream"
+      stream_poll_interval_ms: 200
+      stream_text_property: "textContent" 
+      extraction_selector_key: "response_markdown_body_last_assistant"
+      extraction_method: "innerText" 
+      
+      stream_end_conditions:
+        - type: "element_disappears"
+          selector_key: "thinking_indicator"
+          priority: 0
+        - type: "text_stabilized"
+          stabilization_time_ms: 2500
+          priority: 1
+        - type: "timeout"
+          timeout_seconds: 180
+          priority: 2
+      
+      full_text_wait_strategy:
+        - type: "element_disappears"
+          selector_key: "thinking_indicator"
+        - type: "element_contains_text_or_is_not_empty"
+          selector_key: "response_markdown_body_last_assistant"
+
+    health_check:
+      enabled: true
+      interval_seconds: 300
+      timeout_seconds: 60
+      failure_threshold: 3
+      check_element_selector_key: "health_check_element"
+  ```
+
   # config_manager.py
   
 ```
 import os
 import yaml
+import logging  # <--- 修改：导入 logging
 from pathlib import Path
 from typing import List, Dict, Optional, Union, Any
 from models import AppConfig, LLMSiteConfig, GlobalSettings
-from utils import setup_logging
+# from utils import setup_logging  # <--- 修改：不再从 utils 导入 setup_logging
 
 # Initialize logger
-logger = setup_logging(log_level=os.getenv("LOG_LEVEL", "INFO"))
+# <--- 关键修改：不再调用 setup_logging()，只获取一个 logger 实例。
+# 这个 logger 会自动继承 main.py 中配置的根 logger 的设置。
+logger = logging.getLogger("wrapper_api.config_manager")
 
 # Global config instance
 _config: Optional[AppConfig] = None
@@ -3495,6 +4374,10 @@ def reload_config(config_path: Union[str, Path] = "config.yaml") -> AppConfig:
 
 # Example usage
 if __name__ == "__main__":
+    # This part only runs when you execute `python config_manager.py` directly
+    # It needs its own logging setup for testing
+    from utils import setup_logging
+    setup_logging()
     try:
         # Load configuration
         config = get_config()
@@ -3546,7 +4429,7 @@ class ContextManager:
         return self.contexts.get(session_id, DialogContext()).history
   ```
 
-  # dev1.md
+  # dev2.md
   
 ```
 **开发文档：LLM 网页自动化 OpenAI API 适配器 (Windows 本地版)**
@@ -3556,30 +4439,31 @@ class ContextManager:
 
 目录：
 
-1. 项目概述与目标
-2. 核心原则
-3. 技术栈 (Windows 环境)
-4. 项目文件结构
-5. 核心模块设计
-    * 5.1 配置管理 (config_manager.py & config.yaml)
-    * 5.2 浏览器自动化处理器 (browser_handler.py)
-    * 5.3 API 服务 (main.py)
-    * 5.4 数据模型 (models.py)
-    * 5.5 工具与日志 (utils.py)
-6. 分阶段实施计划 (Windows 环境优化)
-    * 阶段 0: 环境搭建与基础框架 (Windows 重点)
-    * 阶段 1: 单一网站核心自动化 (非流式) 与基础测试
-    * 阶段 2: FastAPI 接口封装 (非流式) 与初步并发控制
-    * 阶段 3: 实现流式响应与性能考量
-    * 阶段 4: 浏览器实例池与资源监控
-    * 阶段 5: 鲁棒性、高级功能与可维护性提升
-7. 规范与最佳实践
-    * 7.1 日志规范与管理
-    * 7.2 错误处理与快照
-    * 7.3 安全注意事项 (Windows 本地)
-    * 7.4 测试策略与节奏
-    * 7.5 依赖管理
-8. 部署与运行 (Windows 本地)
+1.  项目概述与目标
+2.  核心原则
+3.  技术栈 (Windows 环境)
+4.  项目文件结构
+5.  核心模块设计
+    *   5.1 配置管理 (config\_manager.py & config.yaml)
+    *   5.2 浏览器自动化处理器 (browser\_handler.py)
+    *   5.3 API 服务 (main.py)
+    *   5.4 数据模型 (models.py)
+    *   5.5 工具与日志 (utils.py)
+6.  分阶段实施计划 (Windows 环境优化)
+    *   阶段 0: 环境搭建与基础框架 (Windows 重点)
+    *   阶段 1: 单一网站核心自动化 (非流式) 与基础测试
+    *   阶段 2: FastAPI 接口封装 (非流式) 与初步并发控制
+    *   阶段 3: 实现流式响应与性能考量
+    *   阶段 4: 浏览器实例池与资源监控
+    *   阶段 5: 鲁棒性、高级功能与可维护性提升
+7.  规范与最佳实践
+    *   7.1 日志规范与管理
+    *   7.2 错误处理与快照
+    *   7.3 安全注意事项 (Windows 本地)
+    *   7.4 测试策略与节奏
+    *   7.5 依赖管理
+8.  部署与运行 (Windows 本地)
+
 ## 1. 项目概述与目标
 
 本项目旨在通过 Firefox 浏览器自动化技术，在 **Windows 本地环境**下模拟用户访问各种 LLM 网站的操作，并将这些操作封装成符合 OpenAI Chat Completions API 规范 (/v1/chat/completions) 的本地服务。
@@ -3835,7 +4719,7 @@ llm_sites:
         *   核心方法，处理发送提示到获取响应的整个流程。
         *   调用 `_launch_browser_if_needed`, `_ensure_page_options`。
         *   使用 `_perform_action` 发送提示。
-        *   根据 `response_handling.type` (stream/full_text) 调用不同的等待和提取逻辑：
+        *   根据 `response_handling.type` (stream/full\_text) 调用不同的等待和提取逻辑：
             *   **流式 (`stream_callback` 提供时)**: 监控 `streaming_response_target` 的文本变化（使用 `stream_text_property`），通过 `stream_callback` 回传增量文本。根据 `stream_end_conditions` (带优先级) 判断结束。
             *   **完整文本**: 等待 `full_text_wait_strategy` 条件满足，然后从 `extraction_selector_key` 提取文本。
     *   **流式响应结束条件优先级 (`stream_end_conditions`)**:
@@ -3887,6 +4771,7 @@ llm_sites:
 ## 6. 分阶段实施计划 (Windows 环境优化)
 
 ### 阶段 0: 环境搭建与基础框架 (Windows 重点)
+
 *   **任务：**
     1.  环境设置。
     2.  安装核心依赖 (`requirements.txt`)，包括 `psutil`, `tenacity`。
@@ -3897,8 +4782,9 @@ llm_sites:
 *   **产出：** 可加载配置的基础框架，日志系统可用。
 
 ### 阶段 1: 单一网站核心自动化 (非流式) 与基础测试
+
 *   **任务：**
-    1.  完善 `config.yaml` 中一个站点的详细配置 (selectors, profile, options_to_sync, response_handling (full_text), health_check)。
+    1.  完善 `config.yaml` 中一个站点的详细配置 (selectors, profile, options\_to\_sync, response\_handling (full\_text), health\_check)。
     2.  `browser_handler.py` (`LLMWebsiteAutomator`):
         *   `__init__`, `_launch_browser_if_needed` (集成 `playwright-stealth`, 启动选项)。
         *   `_get_selector` (支持备用选择器)。
@@ -3915,6 +4801,7 @@ llm_sites:
 *   **产出：** 能够通过代码自动化一个网站的完整交互（登录复用、选项同步、发送提示、获取完整响应）。
 
 ### 阶段 2: FastAPI 接口封装 (非流式) 与初步并发控制
+
 *   **任务：**
     1.  `main.py`:
         *   FastAPI 应用，`/v1/chat/completions` 端点 (非流式)。
@@ -3926,6 +4813,7 @@ llm_sites:
 *   **产出：** 可通过 OpenAI 兼容 API 调用单个网站的非流式聊天功能。
 
 ### 阶段 3: 实现流式响应与性能考量
+
 *   **任务：**
     1.  `config.yaml`: 完善站点的 `response_handling` (stream 类型, `stream_text_property`, `stream_end_conditions` 带优先级和超时, `stream_poll_interval_ms`)。
     2.  `browser_handler.py` (`LLMWebsiteAutomator`):
@@ -3938,6 +4826,7 @@ llm_sites:
 *   **产出：** API 支持流式响应。
 
 ### 阶段 4: 并发处理与浏览器实例管理
+
 *   **任务：**
     1.  `main.py`:
         *   将 `automators` 从单实例字典改为 `automator_pools: Dict[str, asyncio.Queue[LLMWebsiteAutomator]]`。
@@ -3951,11 +4840,11 @@ llm_sites:
 *   **产出：** 提升并发处理能力，更有效地管理浏览器资源。
 
 ### 阶段 5: 鲁棒性、高级功能与可维护性提升
+
 *   **任务：**
     1.  **配置热更新**: `main.py` 实现 `/reload_config` API 端点和相应逻辑。
     2.  **后台健康检查与实例重启**: `main.py` 中实现定期检查，并能重启不健康的 Automator 实例（从池中移除，关闭，创建新的补上）。
     3.  **监控与告警**:
-        *   集成 Prometheus 监控指标 (请求延迟、实例状态等)。
         *   关键错误时通过 `utils.py` 中的通知函数发送告警。
     4.  **测试覆盖**: 编写更全面的单元测试和集成测试 (`pytest-playwright`)。
     5.  API参数映射/动态选择器注入: 根据需求实现。
@@ -3964,6 +4853,7 @@ llm_sites:
 ## 7. 规范与最佳实践
 
 ### 7.1 日志规范与管理
+
 *   **格式：** `%(asctime)s - %(name)s - %(levelname)s - %(module)s:%(funcName)s:%(lineno)d - %(message)s`
 *   **级别：** DEBUG, INFO, WARNING, ERROR, CRITICAL。由 `config.yaml` 或 `.env` 控制。
 *   **输出：** 控制台 + 日志文件 (按大小/日期轮转)。
@@ -3971,6 +4861,7 @@ llm_sites:
 *   **日志清理**: `utils.py` 中的 `setup_logging` 函数配置 `logging.handlers.RotatingFileHandler` 时，必须设置 `backupCount` 参数（例如，`backupCount=10`），以自动限制保留的日志文件数量。
 
 ### 7.2 错误处理与快照
+
 *   在 `_perform_action` 和其他关键浏览器交互点进行 `try-except`。
 *   捕获 `playwright.sync_api.Error` (如 `TimeoutError`) 等。
 *   失败时：
@@ -3980,6 +4871,7 @@ llm_sites:
 *   API层面返回标准HTTP错误码和OpenAI格式的错误JSON。
 
 ### 7.3 安全注意事项 (Windows 本地)
+
 *   **Firefox Profile (`profiles/`)**: 包含登录凭证，目录权限应设为严格。在文档中强调。
 *   **`.env` 文件**: 存储敏感信息（API Key等），不应提交到版本库。
 *   **API 访问控制**:
@@ -3988,6 +4880,7 @@ llm_sites:
     *   在 `main.py` 中为所有 `/v1/*` 路径（或至少是修改配置的路径如 `/reload_config`）实现一个基于 HTTP `Authorization` Header 的简单 API Key 认证机制。API Key 在 `.env` 文件中配置 (e.g., `API_KEY="your_secret_key"`)。
 
 ### 7.4 测试策略与节奏
+
 *   **单元测试 (`pytest`)**:
     *   `config_manager.py`: 测试配置加载、解析、校验（有效/无效配置）。
     *   `models.py`: Pydantic模型校验逻辑。
@@ -3998,6 +4891,7 @@ llm_sites:
 *   **同步测试**: 在每个功能模块或重要特性开发完成后，立即编写并执行相关的单元测试和集成测试。测试应覆盖正常流程、边界条件和预期的错误场景。
 
 ### 7.5 依赖管理
+
 *   使用 `requirements.txt` (或 `pyproject.toml` 若使用 Poetry/PDM)。
 *   锁定主要依赖版本，以保证环境一致性。
 
@@ -4026,209 +4920,296 @@ llm_sites:
   # main.py
   
 ```
+# main.py
 import os
 import asyncio
 import time
-from typing import Dict, Set, Optional, AsyncGenerator
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+import uuid
+import json
+import logging
+from contextlib import asynccontextmanager
+from typing import Dict, Optional, AsyncGenerator, List, Any
+
+from fastapi import FastAPI, HTTPException, Request, Depends, Security
+from fastapi.security import APIKeyHeader
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
-from pydantic import BaseModel
 
-from config_manager import get_config, get_llm_site_config, get_enabled_llm_sites
+from config_manager import get_config, LLMSiteConfig, reload_config as actual_reload_config, AppConfig
 from browser_handler import LLMWebsiteAutomator
-from utils import setup_logging
-from models import ChatCompletionRequest, ChatCompletionResponse, ChatCompletionStreamResponse
-
-# Load environment variables from .env file
-load_dotenv()
-
-# Setup logging
-logger = setup_logging(
-    log_level=os.getenv("LOG_LEVEL", "INFO"),
-    log_file="logs/wrapper_api.log"
+from utils import setup_logging, notify_on_critical_error
+from models import (
+    OpenAIChatCompletionRequest,
+    OpenAIChatCompletionResponse,
+    ChatCompletionStreamResponse,
+    OpenAIMessage,
+    OpenAIChatChoice,
+    OpenAIUsage,
+    OpenAIChatStreamChoice,
+    OpenAIChatStreamDelta,
+    GlobalSettings,
+    BaseModel
 )
 
+# --- 应用状态类 ---
+class AppState:
+    def __init__(self):
+        self.automator_pools: Dict[str, asyncio.Queue[LLMWebsiteAutomator]] = {}
+        self.site_configs: Dict[str, LLMSiteConfig] = {}
+        self.global_settings: Optional[GlobalSettings] = None
+        self.idle_monitor_task: Optional[asyncio.Task] = None
+        self.stale_automators: Dict[LLMWebsiteAutomator, float] = {}
+
+# --- FastAPI 生命周期管理 ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 1. 初始化日志和应用状态
+    load_dotenv()
+    setup_logging(log_level=os.getenv("LOG_LEVEL", "INFO"), log_file="logs/wrapper_api.log")
+    logger = logging.getLogger("wrapper_api")
+    app.state.logger = logger
+    app.state.core = AppState()
+
+    logger.info("执行启动逻辑...")
+    try:
+        initial_config = get_config()
+        logger.info(f"配置加载成功。发现 {len(initial_config.llm_sites)} 个站点配置。")
+        enabled_sites = [s for s in initial_config.llm_sites if s.enabled]
+        logger.info(f"发现 {len(enabled_sites)} 个启用的站点。")
+        if not enabled_sites:
+            logger.warning("配置文件中没有启用的站点，将不会初始化任何浏览器实例。")
+        
+        await _initialize_pools(app, initial_config)
+        logger.info(f"池初始化完成。创建了 {len(app.state.core.automator_pools)} 个自动化器池。")
+    except Exception as e:
+        logger.critical(f"启动时初始化池失败: {e}", exc_info=True)
+        raise
+    
+    gs = app.state.core.global_settings
+    if gs and gs.idle_instance_check_interval_seconds > 0:
+        app.state.core.idle_monitor_task = asyncio.create_task(monitor_idle_instances_periodically(app))
+    
+    yield  # 应用开始处理请求
+    
+    # --- 关闭逻辑 ---
+    logger.info("执行关闭逻辑...")
+    core_state = app.state.core
+    if core_state.idle_monitor_task and not core_state.idle_monitor_task.done():
+        core_state.idle_monitor_task.cancel()
+        try:
+            await core_state.idle_monitor_task
+        except asyncio.CancelledError:
+            logger.info("空闲监控任务已取消。")
+
+    for automator in list(core_state.stale_automators.keys()):
+        await _cleanup_stale_automator(automator, "shutdown")
+    core_state.stale_automators.clear()
+    
+    for model_id, pool in core_state.automator_pools.items():
+        while not pool.empty():
+            try:
+                await pool.get_nowait().cleanup()
+            except (asyncio.QueueEmpty, Exception) as e:
+                logger.error(f"关闭时从 {model_id} 清理自动化器时出错: {e}")
+                break
+    core_state.automator_pools.clear()
+    core_state.site_configs.clear()
+    logger.info("所有自动化器已清理。")
+
+# --- FastAPI 应用实例 ---
 app = FastAPI(
-    title="LLM API Wrapper",
-    description="Wrapper API for LLM websites with OpenAI API compatibility",
-    version="1.0"
+    title="LLM API 包装器",
+    description="具有模型选择、实例池和热重载的包装器 API。",
+    version="1.3",
+    lifespan=lifespan
 )
 
-# Global state
-active_automators: Dict[str, LLMWebsiteAutomator] = {}
-automator_locks: Dict[str, asyncio.Lock] = {}
+# --- Helper Functions (需要 app.state) ---
+async def _create_new_automator_instance(site_config: LLMSiteConfig) -> LLMWebsiteAutomator:
+    logger = app.state.logger
+    logger.info(f"正在为池创建新的自动化器实例: {site_config.id}")
+    automator = LLMWebsiteAutomator(site_config)
+    try:
+        await automator.initialize()
+        logger.info(f"成功为 {site_config.id} 初始化了新的自动化器")
+        return automator
+    except Exception as e:
+        logger.error(f"在创建期间为 {site_config.id} 初始化新自动化器失败: {e}", exc_info=True)
+        raise
 
-class HealthResponse(BaseModel):
-    status: str
-    details: Dict[str, str]
+async def _cleanup_stale_automator(automator: LLMWebsiteAutomator, reason: str):
+    logger = app.state.logger
+    core_state = app.state.core
+    if automator in core_state.stale_automators:
+        del core_state.stale_automators[automator]
+    try:
+        model_id_label = automator.config.id if automator.config else "unknown"
+        logger.info(f"正在清理过时/失败的 {model_id_label} 自动化器，原因: {reason}")
+        await automator.cleanup()
+    except Exception as e:
+        logger.error(f"为 {automator.config.id if automator.config else 'unknown'} 清理自动化器时出错: {e}")
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize application on startup"""
-    logger.info("Starting LLM API Wrapper application")
-    
-    # Load configuration
-    config = get_config()
-    logger.info("Configuration loaded successfully")
-    
-    # Initialize automators for enabled sites
-    enabled_sites = get_enabled_llm_sites()
-    for site in enabled_sites:
-        logger.info(f"Initializing automator for site: {site.id}")
-        automator = LLMWebsiteAutomator(site)
-        active_automators[site.id] = automator
-        automator_locks[site.id] = asyncio.Lock()
-    
-    logger.info(f"Initialized {len(active_automators)} automators")
+async def monitor_idle_instances_periodically(app: FastAPI):
+    logger = app.state.logger
+    core_state = app.state.core
+    if not core_state.global_settings:
+        logger.error("无法启动空闲实例监控器：全局设置未加载。")
+        return
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Clean up resources on shutdown"""
-    logger.info("Shutting down LLM API Wrapper application")
-    
-    # Close all automators
-    for automator in active_automators.values():
-        await automator.close()
-    
-    logger.info("All automators closed successfully")
-
-@app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
-async def chat_completions(request: ChatCompletionRequest):
-    """OpenAI compatible chat completions endpoint"""
-    # Get model ID from request
-    model_id = request.model
-    if model_id not in active_automators:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Model '{model_id}' not found or disabled"
-        )
-    
-    # Get automator and lock for this model
-    automator = active_automators[model_id]
-    lock = automator_locks[model_id]
-    
-    # Process messages to construct prompt
-    prompt = "\n".join([f"{msg.role}: {msg.content}" for msg in request.messages])
-    
-    # Acquire lock to ensure single access to this automator
-    async with lock:
+    logger.info("启动空闲实例监控任务...")
+    await asyncio.sleep(15)
+    while True:
         try:
-            if request.stream:
-                # Streaming response
-                async def generate_stream() -> AsyncGenerator[str, None]:
-                    start_time = time.time()
-                    completion_text = ""
-                    
+            gs = core_state.global_settings
+            check_interval = gs.idle_instance_check_interval_seconds
+            max_stale_life = gs.max_stale_instance_lifetime_seconds
+            logger.debug(f"空闲/过时监控器正在运行。下一次检查在 {check_interval} 秒后。")
+            await asyncio.sleep(check_interval)
+
+            for automator, stale_since in list(core_state.stale_automators.items()):
+                if (time.time() - stale_since) > max_stale_life:
+                    logger.warning(f"{automator.config.id} 的过时自动化器已超过最大生命周期。强制清理。")
+                    await _cleanup_stale_automator(automator, "max_stale_lifetime_exceeded")
+
+            for model_id, pool in list(core_state.automator_pools.items()):
+                site_config = core_state.site_configs.get(model_id)
+                if not site_config or pool.empty(): continue
+                
+                idle_instance = await pool.get()
+                recycled = False
+                try:
+                    is_healthy = await idle_instance.is_healthy()
+                    should_recycle = await idle_instance.should_recycle_based_on_metrics()
+                    if not is_healthy or should_recycle:
+                        recycled = True
+                        reason = ("unhealthy" if not is_healthy else "") + ("_metrics" if should_recycle else "")
+                        await _cleanup_stale_automator(idle_instance, reason.strip('_'))
+                        new_instance = await _create_new_automator_instance(site_config)
+                        await pool.put(new_instance)
+                except Exception as e:
+                    recycled = True
+                    logger.error(f"检查 {model_id} 的空闲实例时出错: {e}。正在回收。")
+                    await _cleanup_stale_automator(idle_instance, "check_error")
                     try:
-                        async for chunk in automator.send_prompt_and_get_response(prompt, stream=True):
-                            completion_text += chunk
-                            
-                            # Format as OpenAI streaming response
-                            response_chunk = ChatCompletionStreamResponse(
-                                choices=[{
-                                    "delta": {
-                                        "content": chunk,
-                                        "role": "assistant"
-                                    },
-                                    "finish_reason": None
-                                }],
-                                model=model_id
-                            )
-                            yield f"data: {response_chunk.json()}\n\n"
-                            
-                        # Final completion message
-                        final_response = ChatCompletionStreamResponse(
-                            choices=[{
-                                "delta": {},
-                                "finish_reason": "stop"
-                            }],
-                            model=model_id
-                        )
-                        yield f"data: {final_response.json()}\n\n"
-                        
-                    finally:
-                        # Log performance metrics
-                        duration = time.time() - start_time
-                        logger.info(
-                            f"Streaming request completed - Model: {model_id}, "
-                            f"Duration: {duration:.2f}s, "
-                            f"Completion length: {len(completion_text)} chars"
-                        )
-                
-                return StreamingResponse(
-                    generate_stream(),
-                    media_type="text/event-stream"
-                )
-            else:
-                # Non-streaming response
-                start_time = time.time()
-                response_text = await automator.send_prompt_and_get_response(prompt)
-                
-                # Log performance metrics
-                duration = time.time() - start_time
-                logger.info(
-                    f"Request completed - Model: {model_id}, "
-                    f"Duration: {duration:.2f}s, "
-                    f"Completion length: {len(response_text)} chars"
-                )
-                
-                # Construct OpenAI compatible response
-                return ChatCompletionResponse(
-                    choices=[{
-                        "message": {
-                            "role": "assistant",
-                            "content": response_text
-                        },
-                        "finish_reason": "stop"
-                    }],
-                    model=model_id,
-                    usage={
-                        "prompt_tokens": len(prompt.split()),
-                        "completion_tokens": len(response_text.split()),
-                        "total_tokens": len(prompt.split()) + len(response_text.split())
-                    }
-                )
-            
+                        await pool.put(await _create_new_automator_instance(site_config))
+                    except Exception as create_e:
+                        logger.error(f"为 {model_id} 创建替换实例失败: {create_e}")
+                finally:
+                    if not recycled:
+                        await pool.put(idle_instance)
+        except asyncio.CancelledError:
+            logger.info("空闲/过时实例监控任务已取消。")
+            break
         except Exception as e:
-            logger.error(f"Error processing request for model {model_id}: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error processing request: {str(e)}"
+            logger.error(f"空闲/过时监控器发生意外错误: {e}", exc_info=True)
+            await asyncio.sleep(60)
+
+async def _initialize_pools(app: FastAPI, config_to_load: AppConfig):
+    logger = app.state.logger
+    core_state = app.state.core
+    logger.info("开始初始化或更新浏览器实例池...")
+    core_state.global_settings = config_to_load.global_settings
+    new_configs = {site.id: site for site in config_to_load.llm_sites if site.enabled}
+    
+    # ... (rest of the _initialize_pools logic, slightly adapted for app.state) ...
+    # This logic is complex but less likely to be the core issue.
+    # The main change is using core_state.automator_pools etc.
+    core_state.site_configs = new_configs
+    for site_id, site_cfg in new_configs.items():
+        if site_id not in core_state.automator_pools:
+            core_state.automator_pools[site_id] = asyncio.Queue(maxsize=site_cfg.pool_size)
+        
+        pool = core_state.automator_pools[site_id]
+        while pool.qsize() < site_cfg.pool_size:
+            try:
+                new_instance = await _create_new_automator_instance(site_cfg)
+                await pool.put(new_instance)
+            except Exception as e:
+                logger.error(f"向池 {site_id} 添加新实例失败: {e}")
+                break # Stop if one fails
+    logger.info("浏览器实例池初始化/更新完成。")
+
+
+# --- API 端点 ---
+API_KEY_NAME = "X-API-KEY"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+async def get_api_key(key: str = Security(api_key_header)):
+    expected_key = os.getenv("API_KEY")
+    if not expected_key:
+        # For local development, allow access if no key is set in .env
+        return "development_key"
+    if key == expected_key:
+        return key
+    raise HTTPException(status_code=403, detail="无效的 API 密钥")
+
+@app.post("/v1/chat/completions")
+async def chat_completions_endpoint(request: OpenAIChatCompletionRequest, req: Request):
+    logger = req.app.state.logger
+    core_state = req.app.state.core
+    
+    site_id, variant_id = (request.model.split("/", 1) + [None])[:2]
+    logger.info(f"收到对站点 '{site_id}'，变体 '{variant_id or '默认'}' 的请求")
+
+    site_config = core_state.site_configs.get(site_id)
+    if not site_config:
+        raise HTTPException(status_code=404, detail=f"模型 '{site_id}' 未找到或未启用。")
+    pool = core_state.automator_pools.get(site_id)
+    if not pool:
+        raise HTTPException(status_code=500, detail=f"内部错误：模型 '{site_id}' 的池不可用。")
+
+    automator = None
+    try:
+        timeout = core_state.global_settings.timeout if core_state.global_settings else 60
+        automator = await asyncio.wait_for(pool.get(), timeout=timeout)
+        prompt = "\n".join([f"{msg.role}: {msg.content}" for msg in request.messages])
+
+        if request.stream:
+            return StreamingResponse(
+                _stream_generator(automator, prompt, variant_id, request.model, logger),
+                media_type="text/event-stream"
             )
+        else:
+            resp_text = await automator.send_prompt_and_get_response(prompt, None, variant_id)
+            return OpenAIChatCompletionResponse(
+                id=f"chatcmpl-{uuid.uuid4()}", object="chat.completion", created=int(time.time()), model=request.model,
+                choices=[OpenAIChatChoice(index=0, message=OpenAIMessage(role="assistant", content=resp_text), finish_reason="stop")],
+                usage=OpenAIUsage(prompt_tokens=len(prompt.split()), completion_tokens=len(resp_text.split()), total_tokens=len(prompt.split())+len(resp_text.split()))
+            )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="服务暂时不可用，请稍后重试。")
+    finally:
+        if automator:
+            await pool.put(automator)
 
-@app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """Health check endpoint"""
-    status = "healthy"
-    details = {}
-    
-    # Check health of each automator
-    for model_id, automator in active_automators.items():
-        try:
-            is_healthy = await automator.is_healthy()
-            details[model_id] = "healthy" if is_healthy else "unhealthy"
-            if not is_healthy:
-                status = "degraded"
-        except Exception as e:
-            details[model_id] = f"error: {str(e)}"
-            status = "unhealthy"
-    
-    return HealthResponse(status=status, details=details)
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+async def _stream_generator(automator, prompt, variant_id, model_name, logger):
+    response_id = f"chatcmpl-{uuid.uuid4()}"
+    try:
+        async for chunk in automator.send_prompt_and_get_response(prompt, None, variant_id):
+            delta = OpenAIChatStreamDelta(content=chunk)
+            choice = OpenAIChatStreamChoice(index=0, delta=delta, finish_reason=None)
+            resp = ChatCompletionStreamResponse(id=response_id, created=int(time.time()), model=model_name, choices=[choice])
+            yield f"data: {resp.model_dump_json(exclude_none=True)}\n\n"
+        
+        final_choice = OpenAIChatStreamChoice(index=0, delta=OpenAIChatStreamDelta(), finish_reason="stop")
+        final_resp = ChatCompletionStreamResponse(id=response_id, created=int(time.time()), model=model_name, choices=[final_choice])
+        yield f"data: {final_resp.model_dump_json(exclude_none=True)}\n\n"
+        yield "data: [DONE]\n\n"
+    except Exception as e:
+        logger.error(f"流处理错误: {e}", exc_info=True)
+        yield f"data: {json.dumps({'error': {'message': str(e), 'type': 'stream_error'}})}\n\n"
+        yield "data: [DONE]\n\n"
   ```
 
   # models.py
   
 ```
+# models.py
 from enum import Enum
 from typing import Dict, List, Optional, Union, Any
-from pydantic import BaseModel, Field, field_validator, model_validator, HttpUrl
+from pydantic import BaseModel, Field, field_validator, model_validator, HttpUrl, ConfigDict
 
-# Enums
+# 枚举类型
 class LogLevel(str, Enum):
     DEBUG = "DEBUG"
     INFO = "INFO"
@@ -4250,24 +5231,24 @@ class HttpMethod(str, Enum):
     HEAD = "HEAD"
     OPTIONS = "OPTIONS"
 
-# OpenAI API Models
+# OpenAI API 模型
 class OpenAIMessage(BaseModel):
-    role: str = Field(..., description="The role of the message author (system, user, assistant)")
-    content: str = Field(..., description="The content of the message")
-    
+    role: str = Field(..., description="消息作者的角色 (system, user, assistant)")
+    content: str = Field(..., description="消息内容")
+
     @field_validator('role')
     @classmethod
     def validate_role(cls, v: str) -> str:
         allowed_roles = ['system', 'user', 'assistant', 'function']
         if v not in allowed_roles:
-            raise ValueError(f"Role must be one of {allowed_roles}")
+            raise ValueError(f"角色必须是 {allowed_roles} 中的一个")
         return v
 
 class OpenAIFunctionParameter(BaseModel):
     type: str
     description: Optional[str] = None
     enum: Optional[List[str]] = None
-    
+
 class OpenAIFunctionParameters(BaseModel):
     type: str = "object"
     properties: Dict[str, OpenAIFunctionParameter]
@@ -4293,26 +5274,26 @@ class OpenAIChatCompletionRequest(BaseModel):
     user: Optional[str] = None
     functions: Optional[List[OpenAIFunction]] = None
     function_call: Optional[Union[str, Dict[str, str]]] = None
-    
+
     @field_validator('temperature')
     @classmethod
     def validate_temperature(cls, v: Optional[float]) -> Optional[float]:
         if v is not None and (v < 0 or v > 2):
-            raise ValueError("Temperature must be between 0 and 2")
+            raise ValueError("温度必须在 0 到 2 之间")
         return v
-    
+
     @field_validator('top_p')
     @classmethod
     def validate_top_p(cls, v: Optional[float]) -> Optional[float]:
         if v is not None and (v < 0 or v > 1):
-            raise ValueError("Top_p must be between 0 and 1")
+            raise ValueError("Top_p 必须在 0 到 1 之间")
         return v
-    
+
     @field_validator('presence_penalty', 'frequency_penalty')
     @classmethod
     def validate_penalty(cls, v: Optional[float]) -> Optional[float]:
         if v is not None and (v < -2 or v > 2):
-            raise ValueError("Penalty values must be between -2 and 2")
+            raise ValueError("惩罚值必须在 -2 到 2 之间")
         return v
 
 class OpenAIFunctionCall(BaseModel):
@@ -4354,7 +5335,7 @@ class OpenAIChatCompletionResponse(BaseModel):
     choices: List[OpenAIChatChoice]
     usage: OpenAIUsage
 
-# Configuration Models
+# 配置模型
 class ProxySettings(BaseModel):
     enabled: bool = False
     http_proxy: Optional[str] = None
@@ -4384,16 +5365,16 @@ class AuthConfig(BaseModel):
     token: Optional[str] = None
     username: Optional[str] = None
     password: Optional[str] = None
-    
+
     @model_validator(mode='after')
     def check_auth_credentials(self):
         auth_type = self.type
         if auth_type == AuthType.BASIC:
             if not self.username or not self.password:
-                raise ValueError("Username and password are required for basic auth")
+                raise ValueError("基本认证需要用户名和密码")
         elif auth_type == AuthType.BEARER:
             if not self.token:
-                raise ValueError("Token is required for bearer auth")
+                raise ValueError("Bearer 认证需要令牌")
         return self
 
 class RetryConfig(BaseModel):
@@ -4409,13 +5390,12 @@ class SiteConfig(BaseModel):
     auth: AuthConfig = Field(default_factory=AuthConfig)
     retry: RetryConfig = Field(default_factory=RetryConfig)
     endpoints: List[EndpointConfig] = Field(default_factory=list)
-    
+
     @field_validator('base_url')
     @classmethod
     def validate_base_url(cls, v: str) -> str:
-        # Simple URL validation
         if not v.startswith(('http://', 'https://')):
-            raise ValueError("Base URL must start with http:// or https://")
+            raise ValueError("基础 URL 必须以 http:// 或 https:// 开头")
         return v
 
 class GlobalSettings(BaseModel):
@@ -4426,8 +5406,10 @@ class GlobalSettings(BaseModel):
     request_delay: float = 1.0
     concurrent_requests: int = 5
     user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    idle_instance_check_interval_seconds: int = Field(default=60, description="检查池中空闲浏览器实例的间隔时间（秒）。")
+    max_stale_instance_lifetime_seconds: int = Field(default=300, description="配置重载后，标记为过时的实例的最大生命周期（秒）。")
 
-# LLM Site Configuration Models
+# LLM 站点配置模型
 class ViewportConfig(BaseModel):
     width: int = 1920
     height: int = 1080
@@ -4443,20 +5425,23 @@ class StreamEndCondition(BaseModel):
     selector_key: Optional[str] = None
     stabilization_time_ms: Optional[int] = None
     timeout_seconds: Optional[int] = None
-    priority: int = 999  # 默认最低优先级
+    priority: int = 999
 
 class WaitStrategy(BaseModel):
     type: str
     selector_key: Optional[str] = None
+    attribute_name: Optional[str] = None
+    attribute_value: Optional[str] = None
 
 class ResponseHandling(BaseModel):
-    type: str  # "stream" or "full_text"
+    type: str
     stream_poll_interval_ms: int = 150
     stream_text_property: str = "textContent"
     stream_end_conditions: List[StreamEndCondition] = Field(default_factory=list)
     full_text_wait_strategy: List[WaitStrategy] = Field(default_factory=list)
     extraction_selector_key: str
     extraction_method: str = "innerText"
+    stream_error_handling: Optional[Dict[str, Any]] = None
 
 class OptionSync(BaseModel):
     id: str
@@ -4464,7 +5449,7 @@ class OptionSync(BaseModel):
     selector_key: str
     action: str
     target_value_on_page: Optional[str] = None
-    on_failure: str = "abort"  # "abort", "skip", "warn_and_skip"
+    on_failure: str = "abort"
 
 class HealthCheck(BaseModel):
     enabled: bool = True
@@ -4472,6 +5457,18 @@ class HealthCheck(BaseModel):
     timeout_seconds: int = 45
     failure_threshold: int = 3
     check_element_selector_key: str
+
+# 模型选择流程的新模型
+class ModelSelectionStep(BaseModel):
+    action: str = Field(default="click", description="要执行的操作，例如 'click'")
+    selector_key: str = Field(..., description="主 'selectors' 字典中目标元素对应的键")
+    description: Optional[str] = None
+    wait_after_ms: Optional[int] = Field(default=None, description="此操作后可选的延迟（毫秒）")
+
+class ModelVariantConfig(BaseModel):
+    id: str = Field(..., description="此模型变体的唯一 ID，用于 API 请求（例如 'deepseek-v3'）。这是 site_id/ 后面的部分")
+    name_on_page: Optional[str] = Field(default=None, description="页面上显示的人类可读名称，用于日志/参考。")
+    selection_flow: List[ModelSelectionStep] = Field(..., description="选择此模型变体的一系列操作。")
 
 class LLMSiteConfig(BaseModel):
     id: str
@@ -4481,17 +5478,26 @@ class LLMSiteConfig(BaseModel):
     firefox_profile_dir: str
     playwright_launch_options: PlaywrightLaunchOptions = Field(default_factory=PlaywrightLaunchOptions)
     use_stealth: bool = True
-    pool_size: int = 1
+    pool_size: int = Field(default=1, ge=1, description="此站点池的浏览器实例数。")
     max_requests_per_instance: int = 100
     max_memory_per_instance_mb: int = 1024
     selectors: Dict[str, str]
     backup_selectors: Optional[Dict[str, List[str]]] = None
     options_to_sync: List[OptionSync] = Field(default_factory=list)
+    
+    model_variants: Optional[List[ModelVariantConfig]] = Field(default=None, description="此站点上不同模型变体的配置以及如何选择它们。")
+    
     response_handling: ResponseHandling
     health_check: HealthCheck
+    mock_mode: bool = False
     mock_responses: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="Mock responses for testing purposes"
+        description="用于测试目的的模拟响应"
+    )
+
+    # 修正点：添加 model_config 以解决 Pydantic 警告
+    model_config = ConfigDict(
+        protected_namespaces=()
     )
 
 class AppConfig(BaseModel):
@@ -4500,9 +5506,932 @@ class AppConfig(BaseModel):
     proxy_settings: ProxySettings = Field(default_factory=ProxySettings)
     llm_sites: List[LLMSiteConfig] = Field(default_factory=list)
 
+class NotificationConfig(BaseModel):
+    log_only: bool = True
+
 # API 别名
 ChatCompletionRequest = OpenAIChatCompletionRequest
-ChatCompletionResponse = OpenAIChatCompletionResponse
+  ```
+
+  # pw.py
+  
+```
+import asyncio
+import time
+from pathlib import Path
+from playwright.async_api import async_playwright, Page, BrowserContext, ElementHandle
+import logging
+from collections import Counter, defaultdict
+
+# --- 配置区 ---
+TARGET_URL = "https://www.wenxiaobai.com/"  # 修改为你的 LLM 网页 URL
+MONITOR_DURATION_SECONDS = 100  # 手动提交后，监控页面变化的时长
+POLL_INTERVAL_SECONDS = 0.2   # 检查 MutationObserver 记录的频率
+MIN_TEXT_CHANGE_LENGTH = 3    # 文本节点内容变化被认为是“有效”的最小长度
+MAX_XPATH_DEPTH = 10          # 向上追溯父节点以寻找共同容器的最大深度
+MIN_OCCURRENCES_FOR_CANDIDATE = 3 # 一个 XPath 需要至少变化这么多次才被认为是候选容器
+
+LOG_FILE_PATH = "logs/dynamic_stream_detector.log"
+
+# --- 日志设置 ---
+detector_logger = logging.getLogger("DynamicStreamDetector")
+detector_logger.setLevel(logging.INFO) # INFO 或 DEBUG
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+ch = logging.StreamHandler()
+ch.setFormatter(formatter)
+detector_logger.addHandler(ch)
+
+Path("logs").mkdir(exist_ok=True)
+fh = logging.FileHandler(LOG_FILE_PATH, mode='w', encoding='utf-8')
+fh.setFormatter(formatter)
+detector_logger.addHandler(fh)
+
+ENABLE_PLAYWRIGHT_TRACING = True
+TRACE_DIR = Path("traces/dynamic_stream_detection")
+
+# --- JavaScript Code to Inject ---
+JS_MUTATION_OBSERVER_SCRIPT = """
+async (options) => {
+    if (window.llmStreamChanges) { // Clear previous if any
+        window.llmStreamChanges.observer.disconnect();
+        window.llmStreamChanges.records = [];
+    }
+
+    window.llmStreamChanges = {
+        records: [],
+        observer: null,
+        options: options || {} // minTextChangeLength
+    };
+
+    const getElementXPath = (element) => {
+        if (!element || !element.parentNode) return null; // Element might be detached
+        if (element.id !== '') return `id("${element.id}")`;
+        if (element === document.body) return '/html/body'; // More stable than just 'body'
+
+        let ix = 0;
+        const siblings = element.parentNode.childNodes;
+        for (let i = 0; i < siblings.length; i++) {
+            const sibling = siblings[i];
+            if (sibling === element) {
+                const parentPath = getElementXPath(element.parentNode);
+                if (!parentPath) return null; // If parent has no path, this one won't either
+                return parentPath + '/' + element.tagName.toLowerCase() + '[' + (ix + 1) + ']';
+            }
+            if (sibling.nodeType === 1 && sibling.tagName === element.tagName) {
+                ix++;
+            }
+        }
+        return null; // Should not happen if element is in DOM
+    };
+
+    const observer = new MutationObserver((mutationsList) => {
+        for (const mutation of mutationsList) {
+            let targetElement = null;
+            let changeType = mutation.type;
+            let textSample = "";
+
+            if (mutation.type === 'childList') {
+                if (mutation.addedNodes.length > 0) {
+                    targetElement = mutation.addedNodes[0].parentElement || mutation.target; // Prefer parent if adding nodes
+                    // Try to get text from the added node or its children
+                    const addedNode = mutation.addedNodes[0];
+                    if (addedNode.textContent && addedNode.textContent.trim().length > 0) {
+                        textSample = addedNode.textContent.trim().substring(0, 50);
+                    } else if (addedNode.nodeType === Node.ELEMENT_NODE && addedNode.innerText) {
+                         textSample = addedNode.innerText.trim().substring(0,50);
+                    }
+                } else if (mutation.removedNodes.length > 0) {
+                    // Less likely for streaming output, but good to note
+                    targetElement = mutation.target;
+                }
+            } else if (mutation.type === 'characterData') {
+                targetElement = mutation.target.parentElement; // The text node's parent
+                if (mutation.target.textContent &&
+                    mutation.target.textContent.trim().length >= (window.llmStreamChanges.options.minTextChangeLength || 1)) {
+                    textSample = mutation.target.textContent.trim().substring(0, 50);
+                } else {
+                    continue; // Ignore small character data changes
+                }
+            }
+
+            if (targetElement) {
+                const xpath = getElementXPath(targetElement);
+                if (xpath) { // Only record if xpath could be generated
+                    window.llmStreamChanges.records.push({
+                        xpath: xpath,
+                        type: changeType,
+                        timestamp: Date.now(),
+                        textSample: textSample.replace(/\\n/g, ' '),
+                        targetTagName: targetElement.tagName.toLowerCase(),
+                        // attributes: Array.from(targetElement.attributes).map(attr => ({name: attr.name, value: attr.value}))
+                    });
+                }
+            }
+        }
+    });
+
+    observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        characterDataOldValue: false // Don't need old value for this
+    });
+    window.llmStreamChanges.observer = observer;
+    return true; // Signal observer started
+}
+"""
+
+JS_GET_CHANGES_SCRIPT = """
+() => {
+    if (window.llmStreamChanges && window.llmStreamChanges.records) {
+        const records = window.llmStreamChanges.records;
+        window.llmStreamChanges.records = []; // Clear after fetching
+        return records;
+    }
+    return [];
+}
+"""
+
+JS_STOP_OBSERVER_SCRIPT = """
+() => {
+    if (window.llmStreamChanges && window.llmStreamChanges.observer) {
+        window.llmStreamChanges.observer.disconnect();
+        delete window.llmStreamChanges;
+        return true;
+    }
+    return false;
+}
+"""
+
+async def analyze_changes(all_changes: list):
+    detector_logger.info(f"\n--- 分析 {len(all_changes)} 条 DOM 变化记录 ---")
+    if not all_changes:
+        detector_logger.info("没有检测到 DOM 变化。")
+        return
+
+    xpath_counts = Counter()
+    xpath_texts = defaultdict(list)
+    xpath_types = defaultdict(Counter)
+    xpath_parents = defaultdict(Counter)
+
+    for change in all_changes:
+        xpath = change['xpath']
+        xpath_counts[xpath] += 1
+        if change['textSample']:
+            xpath_texts[xpath].append(change['textSample'])
+        xpath_types[xpath][change['type']] += 1
+
+        # Analyze parent XPaths
+        current_xpath_parts = xpath.split('/')
+        for i in range(1, min(len(current_xpath_parts) -1, MAX_XPATH_DEPTH + 1)): # -1 to avoid full document path
+            parent_xpath = "/".join(current_xpath_parts[:-i])
+            if parent_xpath: # Ensure not empty
+                 xpath_parents[parent_xpath][xpath] +=1 # Count how many changed children a parent has
+
+
+    detector_logger.info("\n--- XPath 变化频率统计 (按变化次数排序) ---")
+    # Sort by count, then by XPath string length (shorter preferred for same count)
+    sorted_xpaths = sorted(xpath_counts.items(), key=lambda item: (item[1], -len(item[0])), reverse=True)
+
+    candidate_containers = []
+
+    for xpath, count in sorted_xpaths:
+        if count < MIN_OCCURRENCES_FOR_CANDIDATE: # Filter out infrequent changes
+            continue
+
+        types_str = ", ".join([f"{t}:{c}" for t,c in xpath_types[xpath].items()])
+        detector_logger.info(f"XPath: {xpath}")
+        detector_logger.info(f"  发生变化次数: {count}")
+        detector_logger.info(f"  变化类型: {types_str}")
+        text_samples = xpath_texts.get(xpath, [])
+        if text_samples:
+            unique_samples = list(set(text_samples)) # Show unique samples
+            detector_logger.info(f"  关联文本片段 (最多显示3个不同样本): {unique_samples[:3]}")
+        candidate_containers.append(xpath) # Add to raw candidates
+
+    detector_logger.info(f"\n--- 初步候选容器 XPath (出现次数 >= {MIN_OCCURRENCES_FOR_CANDIDATE}): ---")
+    if candidate_containers:
+        for i, xpath_cand in enumerate(candidate_containers[:10]): # Show top 10
+            detector_logger.info(f"  {i+1}. {xpath_cand} (变化次数: {xpath_counts[xpath_cand]})")
+    else:
+        detector_logger.info("  未找到足够频繁变化的 XPath 作为初步候选。")
+
+
+    detector_logger.info("\n--- 潜在父容器分析 (基于子元素变化频率) ---")
+    # Sort parent candidates by the number of distinct children that changed under them,
+    # and then by the total number of changes under them.
+    sorted_parent_candidates = sorted(
+        xpath_parents.items(),
+        key=lambda item: (len(item[1]), sum(item[1].values())), # (num_distinct_changed_children, total_child_changes)
+        reverse=True
+    )
+
+    final_suggested_containers = []
+    if sorted_parent_candidates:
+        detector_logger.info("最有可能是流容器的父 XPath (按其下不同变化子元素的数量和总变化量排序):")
+        for parent_xpath, children_counts in sorted_parent_candidates[:5]: # Top 5 parent candidates
+            num_distinct_children = len(children_counts)
+            total_child_changes = sum(children_counts.values())
+            detector_logger.info(f"  父 XPath: {parent_xpath}")
+            detector_logger.info(f"    其下有 {num_distinct_children} 个不同子路径发生变化, 总计 {total_child_changes} 次子变化。")
+            if num_distinct_children > 1 or total_child_changes >= MIN_OCCURRENCES_FOR_CANDIDATE * 1.5 : # Heuristic
+                final_suggested_containers.append(parent_xpath)
+    else:
+        detector_logger.info("  未找到明显的父容器。")
+
+    if not final_suggested_containers and candidate_containers:
+        detector_logger.info("\n由于未找到强父容器信号，直接建议变化最频繁的元素作为容器:")
+        final_suggested_containers.extend(candidate_containers[:3]) # Fallback to top direct changes
+
+    detector_logger.info("\n--- 总结：建议的流式容器 XPath (按推断可能性排序) ---")
+    if final_suggested_containers:
+        for i, xpath_sugg in enumerate(list(dict.fromkeys(final_suggested_containers))[:5]): # Unique, top 5
+            detector_logger.info(f"  建议 {i+1}: {xpath_sugg}")
+    else:
+        detector_logger.info("  未能自动推断出明确的流式容器 XPath。请检查详细的 XPath 变化频率统计，并结合 Playwright Trace 进行分析。")
+
+    detector_logger.info("\n提示: 请将以上建议的 XPath 在浏览器开发者工具中测试，并结合 Playwright Trace (如果启用) 进行验证。")
+
+
+async def run_observer(page: Page, context: BrowserContext):
+    detector_logger.info(f"动态流容器探测器启动。请在浏览器中手动输入 Prompt 并提交。")
+    input("完成手动提交后，请按 Enter 键开始监控 DOM 变化...")
+
+    detector_logger.info(f"正在页面注入 MutationObserver 并开始监听 {MONITOR_DURATION_SECONDS} 秒...")
+    await page.evaluate(JS_MUTATION_OBSERVER_SCRIPT, {"minTextChangeLength": MIN_TEXT_CHANGE_LENGTH})
+
+    all_dom_changes = []
+    monitor_start_time = time.time()
+
+    try:
+        while time.time() - monitor_start_time < MONITOR_DURATION_SECONDS:
+            await asyncio.sleep(POLL_INTERVAL_SECONDS)
+            changes_batch = await page.evaluate(JS_GET_CHANGES_SCRIPT)
+            if changes_batch:
+                detector_logger.debug(f"获取到 {len(changes_batch)} 条 DOM 变化记录。")
+                all_dom_changes.extend(changes_batch)
+        detector_logger.info(f"监控时间达到 {MONITOR_DURATION_SECONDS} 秒。总共记录 {len(all_dom_changes)} 条原始变化。")
+
+    except KeyboardInterrupt:
+        detector_logger.info("用户中断监控。")
+    except Exception as e:
+        detector_logger.error(f"监控过程中发生错误: {e}", exc_info=True)
+    finally:
+        detector_logger.info("正在停止页面 MutationObserver...")
+        await page.evaluate(JS_STOP_OBSERVER_SCRIPT)
+
+    if all_dom_changes:
+        await analyze_changes(all_dom_changes)
+    else:
+        detector_logger.info("在监控期间未记录到任何 DOM 变化。")
+
+
+async def main():
+    async with async_playwright() as p:
+        detector_logger.info("正在启动 Firefox...")
+        browser = await p.firefox.launch(headless=False)
+        context = await browser.new_context()
+        page = await context.new_page()
+
+        trace_path = None
+        if ENABLE_PLAYWRIGHT_TRACING:
+            TRACE_DIR.mkdir(parents=True, exist_ok=True)
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            trace_path = TRACE_DIR / f"dynamic_detect_trace_{timestamp}.zip"
+            await context.tracing.start(name="dynamic_detect", screenshots=True, snapshots=True, sources=True)
+            detector_logger.info(f"Playwright Tracing 已启动。Trace 文件将保存到: {trace_path}")
+
+        try:
+            detector_logger.info(f"正在导航到: {TARGET_URL}")
+            await page.goto(TARGET_URL, timeout=60000)
+            detector_logger.info(f"页面加载完成。")
+
+            await run_observer(page, context)
+
+        except Exception as e:
+            detector_logger.error(f"主流程发生错误: {e}", exc_info=True)
+        finally:
+            detector_logger.info("正在关闭浏览器...")
+            if ENABLE_PLAYWRIGHT_TRACING and trace_path and context:
+                try:
+                    await context.tracing.stop(path=str(trace_path))
+                    detector_logger.info(f"Playwright Trace 已保存到: {trace_path}")
+                    detector_logger.info(f"你可以使用 'playwright show-trace {trace_path}' 来查看。")
+                except Exception as e_trace:
+                    detector_logger.error(f"保存 Playwright Trace 时出错: {e_trace}")
+            
+            await browser.close()
+            detector_logger.info("浏览器已关闭。脚本结束。")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+  ```
+
+  # pw1.py
+  
+```
+import asyncio
+import time
+from pathlib import Path
+from playwright.async_api import async_playwright, Page, BrowserContext
+import logging
+from collections import Counter, defaultdict
+import re
+
+# --- 配置区 ---
+TARGET_URL = "https://www.wenxiaobai.com/"
+MONITOR_DURATION_SECONDS = 30
+POLL_INTERVAL_SECONDS = 0.2
+MIN_TEXT_CHANGE_LENGTH = 3
+MAX_XPATH_DEPTH_FOR_RELATIVE = 5
+MIN_OCCURRENCES_FOR_CANDIDATE = 3
+LOG_FILE_PATH = "logs/advanced_stream_detector.log"
+ENABLE_PLAYWRIGHT_TRACING = True
+TRACE_DIR = Path("traces/advanced_stream_detection")
+MAX_ANCESTORS_TO_COLLECT = 4  # 新增：要收集的祖先层级数量
+
+# --- 日志设置 ---
+detector_logger = logging.getLogger("AdvancedStreamDetector")
+detector_logger.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - [%(levelname)s] - %(message)s')
+ch = logging.StreamHandler()
+ch.setFormatter(formatter)
+detector_logger.addHandler(ch)
+Path("logs").mkdir(exist_ok=True)
+fh = logging.FileHandler(LOG_FILE_PATH, mode='w', encoding='utf-8')
+fh.setFormatter(formatter)
+detector_logger.addHandler(fh)
+
+# --- JavaScript Code to Inject ---
+JS_MUTATION_OBSERVER_SCRIPT = """
+async (options) => {
+    if (window.llmStreamChanges) {
+        if (window.llmStreamChanges.observer) window.llmStreamChanges.observer.disconnect();
+        window.llmStreamChanges.records = [];
+    }
+    window.llmStreamChanges = {
+        records: [],
+        observer: null,
+        options: options || {}
+    };
+    const getElementXPath = (element) => {
+        if (!element || !element.parentNode) return null;
+        if (element === document.body) return '/html/body';
+        if (element === document.documentElement) return '/html';
+        let ix = 0;
+        const siblings = element.parentNode.childNodes;
+        let pathPart = element.tagName.toLowerCase();
+        for (let i = 0; i < siblings.length; i++) {
+            const sibling = siblings[i];
+            if (sibling === element) {
+                const parentPath = getElementXPath(element.parentNode);
+                if (!parentPath) return null;
+                return parentPath + '/' + pathPart + '[' + (ix + 1) + ']';
+            }
+            if (sibling.nodeType === 1 && sibling.tagName === element.tagName) {
+                ix++;
+            }
+        }
+        return null;
+    };
+    const getAncestorsInfo = (element, maxLevel) => {
+        const ancestors = [];
+        let current = element.parentElement;
+        let levels = 0;
+        while (current && current !== document.body && levels < maxLevel) {
+            ancestors.push({
+                tag: current.tagName.toLowerCase(),
+                id: current.id || '',
+                classes: Array.from(current.classList || [])
+            });
+            current = current.parentElement;
+            levels++;
+        }
+        return ancestors;
+    };
+    const observer = new MutationObserver((mutationsList) => {
+        for (const mutation of mutationsList) {
+            let targetElement = null;
+            let changeType = mutation.type;
+            let textSample = "";
+            if (mutation.type === 'childList') {
+                targetElement = mutation.target;
+                if (mutation.addedNodes.length > 0) {
+                    const addedNode = mutation.addedNodes[0];
+                    if (addedNode.textContent && addedNode.textContent.trim().length > 0) {
+                        textSample = addedNode.textContent.trim().substring(0, 50);
+                    } else if (addedNode.nodeType === Node.ELEMENT_NODE && addedNode.innerText) {
+                         textSample = addedNode.innerText.trim().substring(0,50);
+                    }
+                }
+            } else if (mutation.type === 'characterData') {
+                targetElement = mutation.target.parentElement;
+                if (targetElement && mutation.target.textContent &&
+                    mutation.target.textContent.trim().length >= (window.llmStreamChanges.options.minTextChangeLength || 1)) {
+                    textSample = mutation.target.textContent.trim().substring(0, 50);
+                } else {
+                    continue; 
+                }
+            }
+            if (targetElement) {
+                const absXpath = getElementXPath(targetElement);
+                if (absXpath) {
+                    const ancestors = getAncestorsInfo(targetElement, window.llmStreamChanges.options.maxAncestors || 2);
+                    window.llmStreamChanges.records.push({
+                        absXpath: absXpath,
+                        type: changeType,
+                        timestamp: Date.now(),
+                        textSample: textSample.replace(/\\n/g, ' '),
+                        targetTagName: targetElement.tagName.toLowerCase(),
+                        targetId: targetElement.id || '',
+                        targetClasses: Array.from(targetElement.classList || []),
+                        ancestors: ancestors  // 新增：存储祖先元素信息
+                    });
+                }
+            }
+        }
+    });
+    observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        characterDataOldValue: false
+    });
+    window.llmStreamChanges.observer = observer;
+    return true;
+}
+"""
+JS_GET_CHANGES_SCRIPT = """
+() => {
+    if (window.llmStreamChanges && window.llmStreamChanges.records) {
+        const records = window.llmStreamChanges.records;
+        window.llmStreamChanges.records = []; // Clear after fetching
+        return records;
+    }
+    return [];
+}
+"""
+JS_STOP_OBSERVER_SCRIPT = """
+() => {
+    if (window.llmStreamChanges && window.llmStreamChanges.observer) {
+        window.llmStreamChanges.observer.disconnect();
+        delete window.llmStreamChanges;
+        return true;
+    }
+    return false;
+}
+"""
+
+# --- Helper functions ---
+def extract_class_segment(classes):
+    """提取有意义的CSS类片段"""
+    if not classes:
+        return ""
+        
+    # 找到最长类名
+    longest = max(classes, key=len, default="")
+    if not longest:
+        return ""
+    
+    # 提取中间部分作为标识（避免前后缀变化）
+    start = len(longest) // 3
+    end = (len(longest) * 2) // 3
+    return longest[start:end]
+    
+def generate_relative_xpath_candidates(abs_xpath: str, tag_name: str, target_id: str, target_classes: list, ancestors: list) -> list:
+    """生成多个可能的相对XPath候选路径"""
+    candidates = []
+    
+    # 1. 尝试基于目标元素自身属性创建候选
+    if target_id and not target_id.isnumeric():
+        candidates.append(f"//{tag_name}[@id='{target_id}']")
+    
+    if target_classes:
+        # 过滤掉无意义的类名
+        meaningful_classes = [
+            c for c in target_classes 
+            if c and len(c) > 2 and not c.isnumeric() 
+            and not re.match(r"^(js-|is-|has-|active|selected|hidden|focused|container|wrapper|base|main|content|item|block|module|component)", c, re.I)
+        ]
+        
+        if meaningful_classes:
+            # 基于单个类名
+            for cls in meaningful_classes[:3]:
+                candidates.append(f"//{tag_name}[contains(@class, '{cls}')]")
+            
+            # 基于多个类名组合
+            if len(meaningful_classes) >= 2:
+                candidates.append(f"//{tag_name}[contains(@class, '{meaningful_classes[0]}') and contains(@class, '{meaningful_classes[1]}')]")
+            
+            # 基于类名片段
+            class_segment = extract_class_segment(meaningful_classes)
+            if class_segment:
+                candidates.append(f"//{tag_name}[contains(@class, '{class_segment}')]")
+    
+    # 2. 尝试基于祖先元素的id或class创建候选路径
+    parts = abs_xpath.split('/')
+    
+    for i, ancestor_info in enumerate(ancestors):
+        if i >= MAX_XPATH_DEPTH_FOR_RELATIVE: 
+            break
+            
+        ancestor_tag = ancestor_info.get('tag', 'div')
+        ancestor_id = ancestor_info.get('id', '')
+        ancestor_classes = ancestor_info.get('classes', [])
+        
+        # 基于祖先ID创建路径
+        if ancestor_id and not ancestor_id.isnumeric():
+            # 计算从祖先到目标的相对层级数
+            levels = i + 1
+            if len(parts) > levels:
+                # 获取从祖先到目标的XPath部分
+                relative_part = "/".join(parts[-(levels+1):])
+                candidate = f"//{ancestor_tag}[@id='{ancestor_id}']//{relative_part}"
+                candidates.append(candidate)
+                # 找到一个就足够好了，可以跳出循环
+                break
+        
+        # 如果祖先没有ID，尝试使用祖先的类名
+        elif ancestor_classes:
+            # 过滤有意义的祖先类名
+            meaningful_ancestor_classes = [
+                c for c in ancestor_classes 
+                if c and len(c) > 2 and not c.isnumeric() 
+                and not re.match(r"^(js-|is-|has-|active|selected|hidden|focused|container|wrapper|base|main|content|item|block|module|component)", c, re.I)
+            ]
+            
+            if meaningful_ancestor_classes:
+                # 计算从祖先到目标的相对层级数
+                levels = i + 1
+                if len(parts) > levels:
+                    # 获取从祖先到目标的XPath部分
+                    relative_part = "/".join(parts[-(levels+1):])
+                    # 使用多个类名组合提高准确性
+                    if len(meaningful_ancestor_classes) >= 2:
+                        candidate = f"//{ancestor_tag}[contains(@class, '{meaningful_ancestor_classes[0]}') and contains(@class, '{meaningful_ancestor_classes[1]}')]//{relative_part}"
+                    else:
+                        candidate = f"//{ancestor_tag}[contains(@class, '{meaningful_ancestor_classes[0]}')]//{relative_part}"
+                    candidates.append(candidate)
+    
+    # 3. 如果仍然没有候选，尝试基于body和类名创建后备路径
+    if not candidates and target_classes:
+        meaningful_classes = [
+            c for c in target_classes 
+            if c and len(c) > 2 and not c.isnumeric() 
+            and not re.match(r"^(js-|is-|has-|active|selected|hidden|focused|container|wrapper|base|main|content|item|block|module|component)", c, re.I)
+        ]
+        
+        if meaningful_classes:
+            candidates.append(f"//body//{tag_name}[contains(@class, '{meaningful_classes[0]}')]")
+    
+    # 4. 最后的备用方案：尝试使用父元素的ID或类名
+    if not candidates and ancestors:
+        first_ancestor = ancestors[0] if ancestors else {}
+        if first_ancestor.get('id'):
+            levels = 1
+            if len(parts) > levels:
+                relative_part = "/".join(parts[-(levels+1):])
+                candidates.append(f"//{first_ancestor.get('tag')}[@id='{first_ancestor.get('id')}']//{relative_part}")
+        elif first_ancestor.get('classes'):
+            meaningful_classes = [
+                c for c in first_ancestor.get('classes') 
+                if c and len(c) > 2 and not c.isnumeric() 
+                and not re.match(r"^(js-|is-|has-|active|selected|hidden|focused|container|wrapper|base|main|content|item|block|module|component)", c, re.I)
+            ]
+            if meaningful_classes:
+                levels = 1
+                if len(parts) > levels:
+                    relative_part = "/".join(parts[-(levels+1):])
+                    candidates.append(f"//{first_ancestor.get('tag')}[contains(@class, '{meaningful_classes[0]}')]//{relative_part}")
+    
+    # 去重并返回结果
+    return list(dict.fromkeys(c for c in candidates if c))
+
+async def analyze_changes(all_changes: list, current_session_id: int):
+    detector_logger.info(f"\n--- 分析会话 {current_session_id} 的 {len(all_changes)} 条 DOM 变化记录 ---")
+    if not all_changes:
+        detector_logger.info("没有检测到 DOM 变化。")
+        return {}
+    
+    xpath_details = defaultdict(lambda: {
+        'count': 0, 'types': Counter(), 'texts': [], 'tag_name': '',
+        'target_id': '', 'target_classes': [], 'relative_candidates': [],
+        'ancestors': []
+    })
+    
+    for change in all_changes:
+        abs_xpath = change['absXpath']
+        details = xpath_details[abs_xpath]
+        details['count'] += 1
+        details['types'][change['type']] += 1
+        if change['textSample']: 
+            details['texts'].append(change['textSample'])
+        if not details['tag_name']:
+            details['tag_name'] = change['targetTagName']
+            details['target_id'] = change['targetId']
+            details['target_classes'] = change['targetClasses']
+            details['ancestors'] = change.get('ancestors', [])
+            details['relative_candidates'] = generate_relative_xpath_candidates(
+                abs_xpath, 
+                change['targetTagName'], 
+                change['targetId'], 
+                change['targetClasses'],
+                change.get('ancestors', [])  # 新增：传递祖先信息
+            )
+    
+    detector_logger.info("\n--- XPath 变化频率统计 (按变化次数排序) ---")
+    sorted_xpaths_items = sorted(xpath_details.items(), key=lambda item: (item[1]['count'], -len(item[0])), reverse=True)
+    processed_results = {}
+    
+    for abs_xpath, details in sorted_xpaths_items:
+        if details['count'] < MIN_OCCURRENCES_FOR_CANDIDATE: 
+            continue
+            
+        processed_results[abs_xpath] = details
+        detector_logger.info(f"绝对 XPath: {abs_xpath}")
+        detector_logger.info(f"  元素标签: {details['tag_name']}, ID: '{details['target_id']}', Classes: {details['target_classes'][:5]}")
+        detector_logger.info(f"  发生变化次数: {details['count']}")
+        
+        types_str = ", ".join([f"{t}:{c}" for t, c in details['types'].items()])
+        detector_logger.info(f"  变化类型: {types_str}")
+        
+        text_samples = list(set(details['texts']))
+        if text_samples: 
+            detector_logger.info(f"  关联文本片段 (最多显示3个不同样本): {text_samples[:3]}")
+        
+        if details['ancestors']:
+            detector_logger.info(f"  祖先元素信息:")
+            for i, ancestor in enumerate(details['ancestors'][:3]):
+                classes = ancestor.get('classes', [])[:3]
+                classes_display = ', '.join(classes) + ('...' if len(classes) > 3 else '')
+                detector_logger.info(f"    层级 {i+1}: {ancestor.get('tag', '?')}, ID: '{ancestor.get('id', '')}', Classes: [{classes_display}]")
+        
+        if details['relative_candidates']:
+            detector_logger.info(f"  启发式相对 XPath 候选:")
+            for rel_xpath in details['relative_candidates'][:3]: 
+                detector_logger.info(f"    - {rel_xpath}")
+        else:
+            detector_logger.info("  无法生成相对 XPath 候选（元素缺少标识属性）")
+        
+        detector_logger.info("-" * 20)
+    
+    parent_xpath_counts = Counter()
+    for abs_xpath in processed_results.keys():
+        parts = abs_xpath.split('/')
+        if len(parts) > 2:
+            parent_xpath = "/".join(parts[:-1])
+            parent_xpath_counts[parent_xpath] += processed_results[abs_xpath]['count']
+    
+    detector_logger.info("\n--- 潜在父容器 (基于其下子元素总变化量) ---")
+    most_active_parents = parent_xpath_counts.most_common(5)
+    if most_active_parents:
+        for parent_xpath, total_child_changes in most_active_parents:
+             detector_logger.info(f"  父 XPath: {parent_xpath} (子元素总变化: {total_child_changes})")
+    else:
+        detector_logger.info("  未找到明显活跃的父容器。")
+    
+    detector_logger.info(f"--- 会话 {current_session_id} 分析结束 ---\n")
+    return processed_results
+
+def analyze_aggregated_changes(all_sessions_data: dict, num_total_sessions: int):
+    detector_logger.info(f"\n--- 分析所有 {num_total_sessions} 个会话的聚合 DOM 变化数据 ---")
+    if not all_sessions_data:
+        detector_logger.info("没有来自任何会话的分析数据。")
+        return
+    
+    aggregated_details = defaultdict(lambda: {
+        'total_count': 0, 'session_appearances': 0, 'session_counts': Counter(),
+        'texts': [], 'tag_name': '', 'target_id': '', 'target_classes': [], 
+        'relative_candidates': [], 'ancestors': []
+    })
+    
+    for session_id, session_results in all_sessions_data.items():
+        for abs_xpath, details in session_results.items():
+            agg_detail = aggregated_details[abs_xpath]
+            agg_detail['total_count'] += details['count']
+            agg_detail['session_appearances'] += 1
+            agg_detail['session_counts'][session_id] = details['count']
+            agg_detail['texts'].extend(details['texts'])
+            
+            if not agg_detail['tag_name']:
+                agg_detail['tag_name'] = details['tag_name']
+                agg_detail['target_id'] = details['target_id']
+                agg_detail['target_classes'] = details['target_classes']
+                agg_detail['relative_candidates'] = details['relative_candidates']
+                agg_detail['ancestors'] = details['ancestors']
+    
+    sorted_aggregated_xpaths = sorted(
+        aggregated_details.items(),
+        key=lambda item: (item[1]['session_appearances'], item[1]['total_count'], -len(item[0])),
+        reverse=True
+    )
+    
+    detector_logger.info("\n--- 跨会话 XPath 变化一致性与频率 (按推荐度排序) ---")
+    final_recommendations = []
+    
+    for abs_xpath, details in sorted_aggregated_xpaths:
+        if details['session_appearances'] < max(1, num_total_sessions // 2) and num_total_sessions > 1: 
+            continue
+            
+        if details['total_count'] < MIN_OCCURRENCES_FOR_CANDIDATE * details['session_appearances'] * 0.3: 
+            continue
+            
+        final_recommendations.append((abs_xpath, details))
+        detector_logger.info(f"绝对 XPath: {abs_xpath}")
+        detector_logger.info(f"  元素标签: {details['tag_name']}, ID: '{details['target_id']}', Classes: {details['target_classes'][:5]}")
+        detector_logger.info(f"  总变化次数: {details['total_count']}")
+        detector_logger.info(f"  出现在 {details['session_appearances']}/{num_total_sessions} 个会话中。")
+        
+        if details['ancestors']:
+            detector_logger.info(f"  祖先元素信息 (来自一个会话样本):")
+            for i, ancestor in enumerate(details['ancestors'][:2]):
+                classes = ancestor.get('classes', [])[:3]
+                classes_display = ', '.join(classes) + ('...' if len(classes) > 3 else '')
+                detector_logger.info(f"    层级 {i+1}: {ancestor.get('tag', '?')}, ID: '{ancestor.get('id', '')}', Classes: [{classes_display}]")
+        
+        text_samples = list(set(details['texts']))
+        if text_samples: 
+            detector_logger.info(f"  关联文本片段 (部分样本): {text_samples[:3]}")
+        
+        if details['relative_candidates']:
+            detector_logger.info(f"  启发式相对 XPath 候选:")
+            for rel_xpath in details['relative_candidates'][:3]: 
+                detector_logger.info(f"    - {rel_xpath}")
+        else:
+            detector_logger.info("  无法生成相对 XPath 候选（元素缺少标识属性）")
+        
+        detector_logger.info("-" * 30)
+    
+    if not final_recommendations:
+        detector_logger.info("未能从多次会话中找到足够一致或频繁的流式容器 XPath。")
+    else:
+        detector_logger.info("\n--- 总结：高度推荐的流式容器 XPath (请重点验证以下条目) ---")
+        for i, (abs_xpath, details) in enumerate(final_recommendations[:5]):
+            detector_logger.info(f"  推荐 {i+1}:")
+            detector_logger.info(f"    绝对 XPath: {abs_xpath}")
+            
+            if details['relative_candidates']:
+                 detector_logger.info(f"    相对候选 (选1-2个最可能的):")
+                 for rel_xpath in details['relative_candidates'][:2]: 
+                     detector_logger.info(f"      - {rel_xpath}")
+            else:
+                detector_logger.info(f"    (未能生成简洁的相对 XPath 候选 - 尝试使用绝对路径)")
+                
+            detector_logger.info(f"    (总变化: {details['total_count']}, 出现会话数: {details['session_appearances']})")
+    
+    detector_logger.info("\n提示: 请将以上建议的 XPath 在浏览器开发者工具中测试 ($x(\"xpath\"))，并结合 Playwright Trace (如果启用) 进行验证其是否准确捕获了流式文本。")
+
+# --- 使用非阻塞输入 ---
+async def get_user_input(prompt: str) -> str:
+    """Gets user input in a non-blocking way by running input() in a separate thread."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, input, prompt)
+
+async def run_observer_session(page: Page, context: BrowserContext, session_id: int) -> list:
+    detector_logger.info(f"\n--- 会话 {session_id} ---")
+    detector_logger.info(f"请在浏览器中为会话 {session_id} 手动输入 Prompt 并提交。")
+    
+    # 循环直到用户按下Enter键或's'键
+    while True:
+        user_action_prompt = (
+            f"完成会话 {session_id} 的手动提交后，请按 Enter 键开始监控 DOM 变化 "
+            f"(或输入 's' 跳过此会话, 'q' 退出整个脚本): "
+        )
+        input_value = await get_user_input(user_action_prompt)
+        input_value = input_value.strip().lower()
+        if input_value == "" or input_value == 's' or input_value == 'q':
+            break
+        else:
+            detector_logger.info("无效输入，请按 Enter, 's', 或 'q'.")
+
+    if input_value == 's':
+        detector_logger.info(f"跳过会话 {session_id}。")
+        return []
+    if input_value == 'q':
+        detector_logger.info(f"用户请求退出脚本。")
+        return "quit"  # 返回特殊值表示退出
+
+    detector_logger.info(f"会话 {session_id}: 正在页面注入 MutationObserver 并开始监听 {MONITOR_DURATION_SECONDS} 秒...")
+    await page.evaluate(JS_MUTATION_OBSERVER_SCRIPT, {
+        "minTextChangeLength": MIN_TEXT_CHANGE_LENGTH,
+        "maxAncestors": MAX_ANCESTORS_TO_COLLECT  # 新增：传递祖先收集层级参数
+    })
+
+    session_dom_changes = []
+    monitor_start_time = time.time()
+
+    try:
+        while time.time() - monitor_start_time < MONITOR_DURATION_SECONDS:
+            await asyncio.sleep(POLL_INTERVAL_SECONDS)
+            changes_batch = await page.evaluate(JS_GET_CHANGES_SCRIPT)
+            if changes_batch:
+                detector_logger.debug(f"会话 {session_id}: 获取到 {len(changes_batch)} 条 DOM 变化记录。")
+                for change in changes_batch:
+                    change['sessionId'] = session_id
+                session_dom_changes.extend(changes_batch)
+        detector_logger.info(f"会话 {session_id}: 监控时间达到。总共记录 {len(session_dom_changes)} 条原始变化。")
+
+    except KeyboardInterrupt:
+        detector_logger.info(f"会话 {session_id}: 用户中断监控。")
+        raise 
+    finally:
+        detector_logger.info(f"会话 {session_id}: 正在停止页面 MutationObserver...")
+        await page.evaluate(JS_STOP_OBSERVER_SCRIPT)
+    
+    return session_dom_changes
+
+async def main():
+    all_sessions_analysis_data = {}
+    session_count = 0
+
+    async with async_playwright() as p:
+        detector_logger.info("正在启动 Firefox...")
+        browser = await p.firefox.launch(headless=False)
+        context = await browser.new_context()
+        page = await context.new_page()
+
+        tracing_started = False
+        trace_path = None
+        
+        # 处理Playwright Tracing
+        if ENABLE_PLAYWRIGHT_TRACING:
+            TRACE_DIR.mkdir(parents=True, exist_ok=True)
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            trace_path = TRACE_DIR / f"adv_detect_multisession_trace_{timestamp}.zip"
+            try:
+                await context.tracing.start(name="adv_detect_multisession", screenshots=True, snapshots=True, sources=True)
+                tracing_started = True
+                detector_logger.info(f"Playwright Tracing 已启动 (覆盖所有会话)。Trace 文件将保存到: {trace_path}")
+            except Exception as e_trace_start:
+                detector_logger.error(f"启动 Playwright Tracing 时出错: {e_trace_start}")
+                tracing_started = False
+
+        try:
+            detector_logger.info(f"正在导航到: {TARGET_URL}")
+            await page.goto(TARGET_URL, timeout=60000)
+            detector_logger.info(f"页面加载完成。")
+
+            while True:
+                session_count += 1
+                try:
+                    session_result = await run_observer_session(page, context, session_count)
+                    
+                    # 检查是否要退出
+                    if session_result == "quit":
+                        detector_logger.info("用户选择退出整个脚本。")
+                        break
+                        
+                    if session_result and isinstance(session_result, list) and len(session_result) > 0:
+                        session_analysis_result = await analyze_changes(session_result, session_count)
+                        if session_analysis_result:
+                            all_sessions_analysis_data[session_count] = session_analysis_result
+                    else:
+                        detector_logger.info(f"会话 {session_count} 未记录到 DOM 变化。")
+                except Exception as e:
+                    detector_logger.error(f"执行会话 {session_count} 时发生错误: {e}", exc_info=True)
+                
+                # 询问是否继续
+                if session_count > 0:
+                    cont_prompt = "是否要进行下一次 Prompt 观察? (y/n, q退出): "
+                    cont = await get_user_input(cont_prompt)
+                    cont = cont.strip().lower()
+                    if cont == 'q':
+                        detector_logger.info("用户选择退出。")
+                        break
+                    if cont != 'y':
+                        break
+            
+            # 聚合分析所有会话
+            if all_sessions_analysis_data:
+                analyze_aggregated_changes(all_sessions_analysis_data, session_count)
+            elif session_count > 0:
+                detector_logger.info("所有会话均未记录到足够用于分析的 DOM 变化。")
+
+        except Exception as e:
+            detector_logger.error(f"主流程发生错误: {e}", exc_info=True)
+        finally:
+            detector_logger.info("正在关闭浏览器...")
+            
+            # 停止并保存Trace文件
+            if tracing_started:
+                try:
+                    await context.tracing.stop(path=str(trace_path))
+                    detector_logger.info(f"Playwright Trace 已保存到: {trace_path}")
+                    detector_logger.info(f"你可以使用 'playwright show-trace {trace_path}' 来查看。")
+                except Exception as e_trace_stop:
+                    detector_logger.error(f"保存 Playwright Trace 时出错: {e_trace_stop}")
+            
+            await browser.close()
+            detector_logger.info("浏览器已关闭。脚本结束。")
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        detector_logger.info("\n脚本被用户强制退出 (主程序级别)。")
+    except SystemExit:
+        detector_logger.info("\n脚本正常退出。")
   ```
 
   # pytest.ini
@@ -4515,10 +6444,85 @@ asyncio_default_fixture_loop_scope = function
   # requirements.txt
   
 ```
+fastapi==0.110.0
+uvicorn[standard]==0.29.0
 playwright>=1.42.0
-pytest-asyncio>=0.23.0
+python-dotenv>=1.0.0
+PyYAML>=6.0
+psutil>=5.9.0
 tenacity>=8.2.3
+
+# 测试相关的库
 pytest>=8.0.0
+pytest-asyncio>=0.23.0
+  ```
+
+  # test_handler.py
+  
+```
+import asyncio
+import logging
+from browser_handler import LLMWebsiteAutomator
+from config_manager import get_config, get_llm_site_config
+from utils import setup_logging
+
+# 直接在这里配置日志，用于本次测试
+setup_logging(log_level="DEBUG")
+logger = logging.getLogger("wrapper_api")
+
+async def main_test():
+    """
+    一个独立的测试函数，用于验证 LLMWebsiteAutomator 的核心功能。
+    """
+    logger.info("--- 开始独立测试 browser_handler ---")
+    
+    try:
+        # 1. 加载配置
+        logger.info("正在加载配置...")
+        # 注意：这里直接用 get_config() 可能会因为没有 lifespan 而出问题
+        # 我们手动调用 load_config 来模拟
+        from config_manager import load_config
+        config = load_config()
+        logger.info("配置加载成功。")
+
+        # 2. 获取启用的站点配置
+        enabled_sites = [s for s in config.llm_sites if s.enabled]
+        if not enabled_sites:
+            logger.error("在 config.yaml 中没有找到启用的站点！测试无法继续。")
+            return
+        
+        site_config = enabled_sites[0]
+        logger.info(f"将要测试的站点: {site_config.id}")
+
+        # 3. 创建并初始化 Automator 实例
+        logger.info(f"正在为 {site_config.id} 创建 LLMWebsiteAutomator 实例...")
+        automator = LLMWebsiteAutomator(site_config)
+        
+        logger.info("正在调用 automator.initialize()...")
+        await automator.initialize()
+        logger.info("automator.initialize() 调用成功！Playwright 实例已启动。")
+
+        # 4. (可选) 进行一次简单的健康检查
+        is_healthy = await automator.is_healthy()
+        logger.info(f"实例健康检查结果: {'健康' if is_healthy else '不健康'}")
+        
+        # 5. (可选) 进行一次模拟请求
+        # logger.info("正在发送一个测试消息...")
+        # response = await automator.send_message("你好")
+        # logger.info(f"收到响应: {response[:100]}...")
+
+    except Exception as e:
+        logger.critical("独立测试过程中发生严重错误！", exc_info=True)
+    finally:
+        if 'automator' in locals() and automator:
+            logger.info("正在清理 automator...")
+            await automator.cleanup()
+            logger.info("清理完成。")
+    
+    logger.info("--- 独立测试结束 ---")
+
+if __name__ == "__main__":
+    asyncio.run(main_test())
   ```
 
   # utils.py
@@ -4531,6 +6535,9 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
 
+# 注意：我们不再从这里导入 models，以避免潜在的循环导入问题
+# from models import NotificationConfig
+
 def setup_logging(
     log_level: str = "INFO",
     log_file: Optional[str] = None,
@@ -4538,47 +6545,31 @@ def setup_logging(
     backup_count: int = 5
 ) -> logging.Logger:
     """
-    Set up logging configuration for the application.
-    
-    Args:
-        log_level (str): Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        log_file (Optional[str]): Path to log file. If None, logs only to console
-        max_bytes (int): Maximum size of log file before rotation
-        backup_count (int): Number of backup files to keep
-    
-    Returns:
-        logging.Logger: Configured logger instance
+    为应用设置日志记录配置。
     """
-    # Create logs directory if it doesn't exist
-    if log_file:
-        log_dir = Path(log_file).parent
-        log_dir.mkdir(parents=True, exist_ok=True)
+    logger_instance = logging.getLogger("wrapper_api")
     
-    # Get logger
-    logger = logging.getLogger("wrapper_api")
+    # 如果已经有处理器，说明已配置过，直接返回，防止重复添加
+    if logger_instance.hasHandlers():
+        return logger_instance
+
+    log_level_const = getattr(logging, log_level.upper(), logging.INFO)
+    logger_instance.setLevel(log_level_const)
     
-    # Convert string log level to logging constant
-    log_level = getattr(logging, log_level.upper(), logging.INFO)
-    logger.setLevel(log_level)
-    
-    # Clear any existing handlers
-    logger.handlers.clear()
-    
-    # Create formatters
     detailed_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s'
+        '%(asctime)s - %(name)s - %(levelname)s - %(module)s:%(funcName)s:%(lineno)d - %(message)s'
     )
     console_formatter = logging.Formatter(
         '%(asctime)s - %(levelname)s - %(message)s'
     )
     
-    # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(console_formatter)
-    logger.addHandler(console_handler)
+    logger_instance.addHandler(console_handler)
     
-    # File handler (if log_file is specified)
     if log_file:
+        log_dir = Path(log_file).parent
+        log_dir.mkdir(parents=True, exist_ok=True)
         file_handler = RotatingFileHandler(
             log_file,
             maxBytes=max_bytes,
@@ -4586,40 +6577,34 @@ def setup_logging(
             encoding='utf-8'
         )
         file_handler.setFormatter(detailed_formatter)
-        logger.addHandler(file_handler)
+        logger_instance.addHandler(file_handler)
     
-    # Prevent propagation to root logger
-    logger.propagate = False
+    logger_instance.propagate = False
     
-    # Log initial message
-    logger.info(f"Logging setup completed. Level: {logging.getLevelName(log_level)}")
+    logger_instance.info(f"Logging setup completed. Level: {logging.getLevelName(log_level_const)}")
     if log_file:
-        logger.info(f"Log file: {log_file}")
+        logger_instance.info(f"Log file: {log_file}")
     
-    return logger
+    return logger_instance
 
 def get_env_log_level() -> str:
     """
-    Get log level from environment variable or return default.
-    
-    Returns:
-        str: Log level string
+    从环境变量获取日志级别或返回默认值。
     """
     return os.getenv("LOG_LEVEL", "INFO").upper()
 
-# Example usage
-if __name__ == "__main__":
-    # Setup logging with both console and file output
-    logger = setup_logging(
-        log_level=get_env_log_level(),
-        log_file="logs/wrapper_api.log"
-    )
-    
-    # Test logging
-    logger.debug("Debug message")
-    logger.info("Info message")
-    logger.warning("Warning message")
-    logger.error("Error message")
-    logger.critical("Critical message")
+def notify_on_critical_error(message: str, config=None): # config 类型提示暂时移除
+    """
+    发送严重错误通知。
+    目前只记录到 CRITICAL 级别，可以扩展为邮件/webhook。
+    """
+    # 直接获取已配置的 logger
+    logger = logging.getLogger("wrapper_api")
+    alert_message = f"CRITICAL_ALERT: {message}"
+    logger.critical(alert_message)
+
+    if config and hasattr(config, 'log_only') and config.log_only:
+        pass # 已经记录
+    # 未来：在此处添加邮件/webhook逻辑
   ```
 

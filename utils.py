@@ -5,6 +5,9 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
 
+# 注意：我们不再从这里导入 models，以避免潜在的循环导入问题
+# from models import NotificationConfig
+
 def setup_logging(
     log_level: str = "INFO",
     log_file: Optional[str] = None,
@@ -12,47 +15,31 @@ def setup_logging(
     backup_count: int = 5
 ) -> logging.Logger:
     """
-    Set up logging configuration for the application.
-    
-    Args:
-        log_level (str): Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        log_file (Optional[str]): Path to log file. If None, logs only to console
-        max_bytes (int): Maximum size of log file before rotation
-        backup_count (int): Number of backup files to keep
-    
-    Returns:
-        logging.Logger: Configured logger instance
+    为应用设置日志记录配置。
     """
-    # Create logs directory if it doesn't exist
-    if log_file:
-        log_dir = Path(log_file).parent
-        log_dir.mkdir(parents=True, exist_ok=True)
+    logger_instance = logging.getLogger("wrapper_api")
     
-    # Get logger
-    logger = logging.getLogger("wrapper_api")
+    # 如果已经有处理器，说明已配置过，直接返回，防止重复添加
+    if logger_instance.hasHandlers():
+        return logger_instance
+
+    log_level_const = getattr(logging, log_level.upper(), logging.INFO)
+    logger_instance.setLevel(log_level_const)
     
-    # Convert string log level to logging constant
-    log_level = getattr(logging, log_level.upper(), logging.INFO)
-    logger.setLevel(log_level)
-    
-    # Clear any existing handlers
-    logger.handlers.clear()
-    
-    # Create formatters
     detailed_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s'
+        '%(asctime)s - %(name)s - %(levelname)s - %(module)s:%(funcName)s:%(lineno)d - %(message)s'
     )
     console_formatter = logging.Formatter(
         '%(asctime)s - %(levelname)s - %(message)s'
     )
     
-    # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(console_formatter)
-    logger.addHandler(console_handler)
+    logger_instance.addHandler(console_handler)
     
-    # File handler (if log_file is specified)
     if log_file:
+        log_dir = Path(log_file).parent
+        log_dir.mkdir(parents=True, exist_ok=True)
         file_handler = RotatingFileHandler(
             log_file,
             maxBytes=max_bytes,
@@ -60,38 +47,32 @@ def setup_logging(
             encoding='utf-8'
         )
         file_handler.setFormatter(detailed_formatter)
-        logger.addHandler(file_handler)
+        logger_instance.addHandler(file_handler)
     
-    # Prevent propagation to root logger
-    logger.propagate = False
+    logger_instance.propagate = False
     
-    # Log initial message
-    logger.info(f"Logging setup completed. Level: {logging.getLevelName(log_level)}")
+    logger_instance.info(f"Logging setup completed. Level: {logging.getLevelName(log_level_const)}")
     if log_file:
-        logger.info(f"Log file: {log_file}")
+        logger_instance.info(f"Log file: {log_file}")
     
-    return logger
+    return logger_instance
 
 def get_env_log_level() -> str:
     """
-    Get log level from environment variable or return default.
-    
-    Returns:
-        str: Log level string
+    从环境变量获取日志级别或返回默认值。
     """
     return os.getenv("LOG_LEVEL", "INFO").upper()
 
-# Example usage
-if __name__ == "__main__":
-    # Setup logging with both console and file output
-    logger = setup_logging(
-        log_level=get_env_log_level(),
-        log_file="logs/wrapper_api.log"
-    )
-    
-    # Test logging
-    logger.debug("Debug message")
-    logger.info("Info message")
-    logger.warning("Warning message")
-    logger.error("Error message")
-    logger.critical("Critical message")
+def notify_on_critical_error(message: str, config=None): # config 类型提示暂时移除
+    """
+    发送严重错误通知。
+    目前只记录到 CRITICAL 级别，可以扩展为邮件/webhook。
+    """
+    # 直接获取已配置的 logger
+    logger = logging.getLogger("wrapper_api")
+    alert_message = f"CRITICAL_ALERT: {message}"
+    logger.critical(alert_message)
+
+    if config and hasattr(config, 'log_only') and config.log_only:
+        pass # 已经记录
+    # 未来：在此处添加邮件/webhook逻辑

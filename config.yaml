@@ -1,12 +1,14 @@
 # Global settings for all sites
 global_settings:
-  timeout: 30  # Default timeout in seconds
-  max_retries: 3  # Default number of retries
-  retry_delay: 5  # Delay between retries in seconds
-  log_level: "INFO"
-  request_delay: 1.0  # Delay between requests in seconds
-  concurrent_requests: 5  # Maximum number of concurrent requests
+  timeout: 60
+  max_retries: 3
+  retry_delay: 5
+  log_level: "DEBUG"
+  request_delay: 0.5 # Default delay after actions like clicking 'new chat' (in seconds)
+  concurrent_requests: 5
   user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+  idle_instance_check_interval_seconds: 60
+  max_stale_instance_lifetime_seconds: 300
 
 # API configurations
 api_settings:
@@ -31,77 +33,69 @@ proxy_settings:
 
 # LLM sites configuration
 llm_sites:
-  - id: "local-chatgpt-clone"
-    name: "Local ChatGPT Clone Interface"
+  - id: "wenxiaobai"
+    name: "闻小AI (wenxiaobai.com)"
     enabled: true
-    url: "http://localhost:3000/chat"
-
-    # Firefox Profile 配置
-    firefox_profile_dir: "local_chatgpt_clone_profile"
-
-    # Playwright 浏览器启动选项
+    url: "https://www.wenxiaobai.com/"
+    firefox_profile_dir: "profiles/wenxiaobai_profile"
     playwright_launch_options:
-      headless: false  # 调试时设为 false，便于观察
+      headless: false
       viewport:
         width: 1920
         height: 1080
     use_stealth: true
+    pool_size: 1
+    max_requests_per_instance: 100
+    max_memory_per_instance_mb: 1024
 
-    # 浏览器实例池大小
-    pool_size: 1  # 测试时使用单个实例
-
-    # 实例资源限制
-    max_requests_per_instance: 150
-    max_memory_per_instance_mb: 1536
-
-    # CSS 选择器
     selectors:
-      input_area: "textarea#prompt-textarea"
-      submit_button: "button[data-testid='send-message-button']"
-      response_container: "div.chat-messages-container"
-      last_response_message: "div.chat-messages-container > div.message-bubble[data-role='assistant']:last-child"
-      streaming_response_target: "div.chat-messages-container > div.message-bubble[data-role='assistant']:last-child > div.content"
-      thinking_indicator: "div.spinner-overlay.active"
-      model_selector_dropdown: "select#model-selector"
-      theme_toggle_dark: "button#theme-toggle[aria-label='Switch to dark theme']"
+      new_chat_button: "xpath=//div[contains(@class, 'NewChat_left') and .//span[normalize-space()='新对话']]"
+      input_area: "xpath=//textarea[@placeholder='给 小白 发送消息']"
+      submit_button: "xpath=//div[@class='MsgInput_icon_container__4burH']//*[name()='svg']"
+      response_markdown_body_last_assistant: "xpath=(//div[contains(@class, 'markdown-body') and @data-sentry-component='Markdown' and @data-sentry-source-file='index.tsx'])[1]"
+      thinking_indicator: 'xpath=//*[@id="chat_turn_container"]//div[contains(@class, "loading-title") and normalize-space(.)="思考中..."]'
+      model_selection_popup_trigger: "xpath=//div[contains(@class, 'PopupItem_btn_act__') and contains(@data-key, 'deepseek') and .//div[contains(@class, 'PopupItem_btn_msg__')]]"
+      wenxiaobai_deepseek_v3_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='日常问答（V3）']]"
+      wenxiaobai_deepseek_r1_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='深度思考（R1）']]"
+      wenxiaobai_qwen3_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='千问 3']]"
+      response_container_general: "xpath=(//div[contains(@class, 'Answser_answer_body_content')])[1]"
+      last_response_options_trigger: "xpath=//*[@id='chat_turn_container']//div[starts-with(@class, 'TurnCard_right_opts') and contains(@class, 'TurnCard_more_opts_show')]"
+      health_check_element: "xpath=//textarea[@placeholder='给 小白 发送消息']"
 
-    # 备用选择器
-    backup_selectors:
-      input_area:
-        - "textarea[name='user_prompt']"
-        - "div.input-wrapper > textarea"
-      submit_button:
-        - "button.submit-chat"
-        - "button[type='submit']"
+    model_variants:
+      - id: "deepseek-v3"
+        name_on_page: "日常问答（V3）"
+        selection_flow:
+          - selector_key: "model_selection_popup_trigger"
+            description: "Click to open model selection popup"
+            wait_after_ms: 500
+          - selector_key: "wenxiaobai_deepseek_v3_choice"
+            description: "Select DeepSeek V3 model"
+            wait_after_ms: 200
+      - id: "deepseek-r1"
+        name_on_page: "深度思考（R1）"
+        selection_flow:
+          - selector_key: "model_selection_popup_trigger"
+            wait_after_ms: 500
+          - selector_key: "wenxiaobai_deepseek_r1_choice"
+            wait_after_ms: 200
+      - id: "qwen3"
+        name_on_page: "千问 3"
+        selection_flow:
+          - selector_key: "model_selection_popup_trigger"
+            wait_after_ms: 500
+          - selector_key: "wenxiaobai_qwen3_choice"
+            wait_after_ms: 200
 
-    # 页面选项同步配置
-    options_to_sync:
-      - id: "model_selection_on_page"
-        description: "Ensure the correct model is selected on the page"
-        selector_key: "model_selector_dropdown"
-        action: "select_by_value"
-        target_value_on_page: "gpt-3.5-turbo"
-        on_failure: "warn_and_skip"
+    options_to_sync: []
 
-      - id: "dark_theme_activation"
-        description: "Ensure dark theme is active"
-        selector_key: "theme_toggle_dark"
-        action: "click_if_not_active"
-        on_failure: "warn_and_skip"
-
-    # 响应处理配置
     response_handling:
       type: "stream"
-      stream_poll_interval_ms: 150
+      stream_poll_interval_ms: 200
       stream_text_property: "textContent"
-      stream_buffer_size: 1024  # 流式响应缓冲区大小(字节)
-      stream_timeout_ms: 30000  # 流式响应超时时间(毫秒)
-      stream_error_handling:
-        max_retries: 2  # 流式响应错误重试次数
-        retry_delay_ms: 500  # 重试间隔(毫秒)
-        fallback_to_full_response: true  # 流式失败时是否回退到完整响应
-      
-      # 流式响应结束条件
+      extraction_selector_key: "response_markdown_body_last_assistant"
+      extraction_method: "innerText"
+
       stream_end_conditions:
         - type: "element_disappears"
           selector_key: "thinking_indicator"
@@ -113,20 +107,15 @@ llm_sites:
           timeout_seconds: 180
           priority: 2
 
-      # 完整文本等待策略
       full_text_wait_strategy:
         - type: "element_disappears"
           selector_key: "thinking_indicator"
         - type: "element_contains_text_or_is_not_empty"
-          selector_key: "last_response_message"
-      
-      extraction_selector_key: "last_response_message"
-      extraction_method: "innerText"
+          selector_key: "response_markdown_body_last_assistant"
 
-    # 站点健康检查配置
     health_check:
       enabled: true
       interval_seconds: 300
-      timeout_seconds: 45
+      timeout_seconds: 60
       failure_threshold: 3
-      check_element_selector_key: "input_area"
+      check_element_selector_key: "health_check_element"
