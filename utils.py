@@ -1,3 +1,5 @@
+# utils.py
+
 import logging
 import os
 import sys
@@ -26,17 +28,23 @@ def setup_logging(
     log_level_const = getattr(logging, log_level.upper(), logging.INFO)
     logger_instance.setLevel(log_level_const)
     
+    # 详细格式化器，用于文件
     detailed_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(module)s:%(funcName)s:%(lineno)d - %(message)s'
+        '%(asctime)s - %(name)s - %(levelname)s - [%(module)s:%(funcName)s:%(lineno)d] - %(message)s'
     )
+    # 简洁格式化器，用于控制台
     console_formatter = logging.Formatter(
         '%(asctime)s - %(levelname)s - %(message)s'
     )
     
+    # --- 控制台 Handler ---
+    # 默认只显示 INFO 及以上级别
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(console_formatter)
+    console_handler.setLevel(logging.INFO) # <-- 关键修改：设置控制台级别为INFO
     logger_instance.addHandler(console_handler)
     
+    # --- 全局日志文件 Handler ---
     if log_file:
         log_dir = Path(log_file).parent
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -47,13 +55,15 @@ def setup_logging(
             encoding='utf-8'
         )
         file_handler.setFormatter(detailed_formatter)
+        # 文件 handler 遵循全局日志级别
+        file_handler.setLevel(log_level_const)
         logger_instance.addHandler(file_handler)
     
     logger_instance.propagate = False
     
-    logger_instance.info(f"Logging setup completed. Level: {logging.getLevelName(log_level_const)}")
+    logger_instance.info(f"Logging setup completed. Root Level: {logging.getLevelName(log_level_const)}")
     if log_file:
-        logger_instance.info(f"Log file: {log_file}")
+        logger_instance.info(f"Global log file: {log_file}")
     
     return logger_instance
 

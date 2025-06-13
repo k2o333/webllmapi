@@ -1,5 +1,5 @@
 # main.py
-# (完整文件，包含方案一的修改)
+
 import os
 import asyncio
 import time
@@ -8,6 +8,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from typing import Dict, Optional, AsyncGenerator, List, Any
+from pathlib import Path  # <--- 在这里添加导入
 
 from fastapi import FastAPI, HTTPException, Request, Depends, Security
 from fastapi.security import APIKeyHeader
@@ -103,6 +104,37 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# --- Per-request logging helper ---
+@asynccontextmanager
+async def per_request_logging(request_id: str, site_id: str, logger: logging.Logger):
+    """一个上下文管理器，用于为单个请求动态添加和移除日志文件处理器。"""
+    log_dir = Path("logs") / site_id
+    log_dir.mkdir(parents=True, exist_ok=True)
+    
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    request_log_file = log_dir / f"{timestamp}_{request_id}.log"
+    
+    # 创建此请求独有的文件处理器
+    handler = logging.FileHandler(request_log_file, encoding='utf-8')
+    handler.setLevel(logging.DEBUG)  # 捕获所有级别的日志
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - [%(module)s:%(funcName)s:%(lineno)d] - %(message)s'
+    )
+    handler.setFormatter(formatter)
+    
+    # 将处理器添加到主 logger
+    logger.addHandler(handler)
+    logger.info(f"动态日志已启动，日志文件: {request_log_file}")
+    
+    try:
+        yield  # 在此期间，所有日志都会写入这个新文件
+    finally:
+        logger.info(f"动态日志已关闭，日志文件: {request_log_file}")
+        # 关闭并从主 logger 中移除此处理器，以防内存泄漏
+        handler.close()
+        logger.removeHandler(handler)
+
+
 # --- Helper Functions (需要 app.state) ---
 async def _create_new_automator_instance(site_config: LLMSiteConfig) -> LLMWebsiteAutomator:
     logger = app.state.logger
@@ -190,9 +222,6 @@ async def _initialize_pools(app: FastAPI, config_to_load: AppConfig):
     core_state.global_settings = config_to_load.global_settings
     new_configs = {site.id: site for site in config_to_load.llm_sites if site.enabled}
     
-    # ... (rest of the _initialize_pools logic, slightly adapted for app.state) ...
-    # This logic is complex but less likely to be the core issue.
-    # The main change is using core_state.automator_pools etc.
     core_state.site_configs = new_configs
     for site_id, site_cfg in new_configs.items():
         if site_id not in core_state.automator_pools:
@@ -216,11 +245,47 @@ api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 async def get_api_key(key: str = Security(api_key_header)):
     expected_key = os.getenv("API_KEY")
     if not expected_key:
-        # For local development, allow access if no key is set in .env
         return "development_key"
     if key == expected_key:
         return key
     raise HTTPException(status_code=403, detail="无效的 API 密钥")
+
+async def _stream_generator(automator: LLMWebsiteAutomator, prompt: str, variant_id: Optional[str], model_name: str, logger: logging.Logger, request_id: str):
+    response_id = f"chatcmpl-{request_id}"
+    
+    async with per_request_logging(request_id, automator.config.id, logger):
+        try:
+            raw_generator = await automator.send_prompt_and_get_response(
+                prompt, 
+                None, 
+                variant_id, 
+                return_raw_generator=True
+            )
+
+            if not hasattr(raw_generator, '__aiter__'):
+                raise TypeError("Expected an async generator for streaming, but did not receive one.")
+
+            async for chunk in raw_generator:
+                delta = OpenAIChatStreamDelta(content=chunk)
+                choice = OpenAIChatStreamChoice(index=0, delta=delta, finish_reason=None)
+                resp = ChatCompletionStreamResponse(id=response_id, created=int(time.time()), model=model_name, choices=[choice])
+                yield f"data: {resp.model_dump_json(exclude_none=True)}\n\n"
+            
+            final_choice = OpenAIChatStreamChoice(index=0, delta=OpenAIChatStreamDelta(), finish_reason="stop")
+            final_resp = ChatCompletionStreamResponse(id=response_id, created=int(time.time()), model=model_name, choices=[final_choice])
+            yield f"data: {final_resp.model_dump_json(exclude_none=True)}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            logger.error(f"流处理错误: {e}", exc_info=True)
+            error_payload = {
+                "error": {
+                    "message": f"在流式传输期间发生服务器错误: {str(e)}",
+                    "type": "internal_server_error",
+                    "code": None
+                }
+            }
+            yield f"data: {json.dumps(error_payload)}\n\n"
+            yield "data: [DONE]\n\n"
 
 @app.post("/v1/chat/completions")
 async def chat_completions_endpoint(request: OpenAIChatCompletionRequest, req: Request):
@@ -228,7 +293,9 @@ async def chat_completions_endpoint(request: OpenAIChatCompletionRequest, req: R
     core_state = req.app.state.core
     
     site_id, variant_id = (request.model.split("/", 1) + [None])[:2]
-    logger.info(f"收到对站点 '{site_id}'，变体 '{variant_id or '默认'}' 的请求")
+    request_id = str(uuid.uuid4())[:8]
+    
+    logger.info(f"收到请求 [ID: {request_id}] -> 站点: '{site_id}', 变体: '{variant_id or '默认'}'")
 
     site_config = core_state.site_configs.get(site_id)
     if not site_config:
@@ -249,62 +316,23 @@ async def chat_completions_endpoint(request: OpenAIChatCompletionRequest, req: R
 
         if request.stream:
             return StreamingResponse(
-                # 此处调用 _stream_generator，它会处理流式响应
-                _stream_generator(automator, prompt, variant_id, request.model, logger),
+                _stream_generator(automator, prompt, variant_id, request.model, logger, request_id),
                 media_type="text/event-stream"
             )
         else:
-            # 非流式调用，直接等待完整响应
-            resp_text = await automator.send_prompt_and_get_response(prompt, None, variant_id)
+            async with per_request_logging(request_id, site_id, logger):
+                resp_text = await automator.send_prompt_and_get_response(prompt, None, variant_id)
             return OpenAIChatCompletionResponse(
-                id=f"chatcmpl-{uuid.uuid4()}", object="chat.completion", created=int(time.time()), model=request.model,
+                id=f"chatcmpl-{request_id}", object="chat.completion", created=int(time.time()), model=request.model,
                 choices=[OpenAIChatChoice(index=0, message=OpenAIMessage(role="assistant", content=resp_text), finish_reason="stop")],
                 usage=OpenAIUsage(prompt_tokens=len(prompt.split()), completion_tokens=len(resp_text.split()), total_tokens=len(prompt.split())+len(resp_text.split()))
             )
     except asyncio.TimeoutError:
+        logger.error(f"请求 [ID: {request_id}] 获取自动化器实例超时。")
         raise HTTPException(status_code=503, detail="服务暂时不可用，请稍后重试。")
+    except Exception as e:
+        logger.error(f"请求 [ID: {request_id}] 处理时发生未知错误: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"内部服务器错误: {e}")
     finally:
         if automator:
             await pool.put(automator)
-
-# ####################################################################
-# ## 方案一：修改此辅助函数
-# ####################################################################
-async def _stream_generator(automator: LLMWebsiteAutomator, prompt: str, variant_id: Optional[str], model_name: str, logger: logging.Logger):
-    response_id = f"chatcmpl-{uuid.uuid4()}"
-    try:
-        # **核心修改**：调用时将 return_raw_generator 设置为 True
-        raw_generator = await automator.send_prompt_and_get_response(
-            prompt, 
-            None, 
-            variant_id, 
-            return_raw_generator=True
-        )
-
-        # 确保返回的是一个异步生成器
-        if not hasattr(raw_generator, '__aiter__'):
-            raise TypeError("Expected an async generator for streaming, but did not receive one.")
-
-        async for chunk in raw_generator:
-            delta = OpenAIChatStreamDelta(content=chunk)
-            choice = OpenAIChatStreamChoice(index=0, delta=delta, finish_reason=None)
-            resp = ChatCompletionStreamResponse(id=response_id, created=int(time.time()), model=model_name, choices=[choice])
-            yield f"data: {resp.model_dump_json(exclude_none=True)}\n\n"
-        
-        # 发送流结束标记
-        final_choice = OpenAIChatStreamChoice(index=0, delta=OpenAIChatStreamDelta(), finish_reason="stop")
-        final_resp = ChatCompletionStreamResponse(id=response_id, created=int(time.time()), model=model_name, choices=[final_choice])
-        yield f"data: {final_resp.model_dump_json(exclude_none=True)}\n\n"
-        yield "data: [DONE]\n\n"
-    except Exception as e:
-        logger.error(f"流处理错误: {e}", exc_info=True)
-        error_payload = {
-            "error": {
-                "message": f"在流式传输期间发生服务器错误: {str(e)}",
-                "type": "internal_server_error",
-                "code": None
-            }
-        }
-        # 发送一个符合OpenAI错误格式的SSE事件
-        yield f"data: {json.dumps(error_payload)}\n\n"
-        yield "data: [DONE]\n\n"

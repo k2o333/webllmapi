@@ -1,5 +1,4 @@
 # browser_handler.py
-# (完整文件，包含方案一的修改)
 
 import asyncio
 import logging
@@ -279,6 +278,25 @@ class LLMWebsiteAutomator:
                 return default_response.get('text', 'Mock full response')
 
         page = self.managed_browser_instance.page
+
+        # --- MODIFICATION START: Click "New Chat" button ---
+        new_chat_selector = self.config.selectors.get("new_chat_button")
+        if new_chat_selector:
+            logger.info(f"[{self.config.id}] 尝试点击 '新对话' 按钮...")
+            try:
+                new_chat_button = await page.query_selector(new_chat_selector)
+                if new_chat_button and await new_chat_button.is_visible():
+                    await new_chat_button.click(timeout=10000)
+                    logger.info(f"[{self.config.id}] '新对话' 按钮点击成功。")
+                    await asyncio.sleep(0.5) # Click后短暂等待UI刷新
+                else:
+                    logger.info(f"[{self.config.id}] '新对话' 按钮未找到或不可见，跳过点击。")
+            except Exception as e:
+                logger.warning(f"[{self.config.id}] 点击 '新对话' 按钮时出错 (将继续执行): {e}")
+        else:
+             logger.debug(f"[{self.config.id}] 配置中未定义 'new_chat_button'，跳过点击。")
+        # --- MODIFICATION END ---
+
         self.managed_browser_instance.request_count += 1
         self.managed_browser_instance.last_request_time = time.time()
 
@@ -352,7 +370,16 @@ class LLMWebsiteAutomator:
         }
         logger.debug(f"[{self.config.id}] Streaming from selector '{response_area_selector}', property '{text_property}'")
 
-        await asyncio.sleep(0.5)
+        # --- MODIFICATION START: Wait for response container ---
+        try:
+            logger.info(f"[{self.config.id}] 等待响应容器 '{response_area_selector}' 出现 (超时30秒)...")
+            # 使用 'attached' 状态，表示元素已在DOM中，但不一定可见，这对于流式响应的初始阶段更可靠
+            await page.wait_for_selector(response_area_selector, state="attached", timeout=30000)
+            logger.info(f"[{self.config.id}] 响应容器已出现，开始流式轮询。")
+        except Exception as e:
+            logger.error(f"[{self.config.id}] 等待响应容器超时或失败: {e}. 流式传输可能不会开始。")
+            # 即使失败，也继续执行循环，让结束条件（如超时）来处理
+        # --- MODIFICATION END ---
 
         loop_count = 0
         while True:
@@ -521,15 +548,12 @@ class LLMWebsiteAutomator:
         logger.info(f"[{self.config.id}] Full response extracted. Length: {len(text_content)}")
         return text_content.strip()
 
-    # ####################################################################
-    # ## 方案一：修改此方法
-    # ####################################################################
     async def send_prompt_and_get_response(
         self, 
         prompt: str, 
         stream_callback=None, 
         target_model_variant_id: Optional[str] = None,
-        return_raw_generator: bool = False # 新增参数
+        return_raw_generator: bool = False
     ) -> Union[str, AsyncGenerator[str, None]]:
         await self._initialized_event.wait()
         start_time = time.time()
@@ -538,7 +562,6 @@ class LLMWebsiteAutomator:
         try:
             response_or_generator = await self.send_message(prompt, target_model_variant_id=target_model_variant_id)
             
-            # 如果调用者明确需要原始生成器，直接返回
             if return_raw_generator:
                 logger.info(f"[{self.config.id}] Returning raw generator as requested.")
                 return response_or_generator
