@@ -8,7 +8,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from typing import Dict, Optional, AsyncGenerator, List, Any
-from pathlib import Path  # <--- 在这里添加导入
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Depends, Security
 from fastapi.security import APIKeyHeader
@@ -63,10 +63,13 @@ async def lifespan(app: FastAPI):
         logger.info(f"池初始化完成。创建了 {len(app.state.core.automator_pools)} 个自动化器池。")
     except Exception as e:
         logger.critical(f"启动时初始化池失败: {e}", exc_info=True)
-        raise
+        # 在开发环境中，我们可能希望它继续运行以便调试
+        # 在生产环境中，这里可能应该直接 raise e 终止应用
+        pass
     
     gs = app.state.core.global_settings
     if gs and gs.idle_instance_check_interval_seconds > 0:
+        logger.info("启动空闲实例监控任务...")
         app.state.core.idle_monitor_task = asyncio.create_task(monitor_idle_instances_periodically(app))
     
     yield  # 应用开始处理请求
@@ -88,7 +91,8 @@ async def lifespan(app: FastAPI):
     for model_id, pool in core_state.automator_pools.items():
         while not pool.empty():
             try:
-                await pool.get_nowait().cleanup()
+                automator = await pool.get_nowait()
+                await automator.cleanup()
             except (asyncio.QueueEmpty, Exception) as e:
                 logger.error(f"关闭时从 {model_id} 清理自动化器时出错: {e}")
                 break
@@ -114,25 +118,24 @@ async def per_request_logging(request_id: str, site_id: str, logger: logging.Log
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     request_log_file = log_dir / f"{timestamp}_{request_id}.log"
     
-    # 创建此请求独有的文件处理器
     handler = logging.FileHandler(request_log_file, encoding='utf-8')
-    handler.setLevel(logging.DEBUG)  # 捕获所有级别的日志
+    handler.setLevel(logging.DEBUG)
     formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - [%(module)s:%(funcName)s:%(lineno)d] - %(message)s'
+        '%(asctime)s - %(levelname)s - [%(name)s:%(funcName)s:%(lineno)d] - %(message)s'
     )
     handler.setFormatter(formatter)
     
-    # 将处理器添加到主 logger
-    logger.addHandler(handler)
+    # 将处理器添加到根 logger
+    root_logger = logging.getLogger("wrapper_api")
+    root_logger.addHandler(handler)
     logger.info(f"动态日志已启动，日志文件: {request_log_file}")
     
     try:
-        yield  # 在此期间，所有日志都会写入这个新文件
+        yield
     finally:
         logger.info(f"动态日志已关闭，日志文件: {request_log_file}")
-        # 关闭并从主 logger 中移除此处理器，以防内存泄漏
         handler.close()
-        logger.removeHandler(handler)
+        root_logger.removeHandler(handler)
 
 
 # --- Helper Functions (需要 app.state) ---
@@ -167,7 +170,6 @@ async def monitor_idle_instances_periodically(app: FastAPI):
         logger.error("无法启动空闲实例监控器：全局设置未加载。")
         return
 
-    logger.info("启动空闲实例监控任务...")
     await asyncio.sleep(15)
     while True:
         try:
@@ -234,7 +236,7 @@ async def _initialize_pools(app: FastAPI, config_to_load: AppConfig):
                 await pool.put(new_instance)
             except Exception as e:
                 logger.error(f"向池 {site_id} 添加新实例失败: {e}")
-                break # Stop if one fails
+                break
     logger.info("浏览器实例池初始化/更新完成。")
 
 
@@ -301,8 +303,8 @@ async def chat_completions_endpoint(request: OpenAIChatCompletionRequest, req: R
     if not site_config:
         raise HTTPException(status_code=404, detail=f"模型 '{site_id}' 未找到或未启用。")
     pool = core_state.automator_pools.get(site_id)
-    if not pool:
-        raise HTTPException(status_code=500, detail=f"内部错误：模型 '{site_id}' 的池不可用。")
+    if not pool or pool.empty():
+        raise HTTPException(status_code=503, detail=f"服务暂时不可用：模型 '{site_id}' 的实例池为空或不可用。")
 
     automator = None
     try:
@@ -332,6 +334,10 @@ async def chat_completions_endpoint(request: OpenAIChatCompletionRequest, req: R
         raise HTTPException(status_code=503, detail="服务暂时不可用，请稍后重试。")
     except Exception as e:
         logger.error(f"请求 [ID: {request_id}] 处理时发生未知错误: {e}", exc_info=True)
+        # 归还实例，即使它可能已损坏
+        if automator:
+            await pool.put(automator)
+            automator = None # 确保 finally 块不会再次归还
         raise HTTPException(status_code=500, detail=f"内部服务器错误: {e}")
     finally:
         if automator:

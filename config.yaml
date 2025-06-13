@@ -1,3 +1,5 @@
+# 文件: config.yaml
+
 # Global settings for all sites
 global_settings:
   timeout: 60
@@ -6,7 +8,7 @@ global_settings:
   log_level: "DEBUG"
   request_delay: 0.5 # Default delay after actions like clicking 'new chat' (in seconds)
   concurrent_requests: 5
-  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
   idle_instance_check_interval_seconds: 60
   max_stale_instance_lifetime_seconds: 300
 
@@ -37,12 +39,21 @@ llm_sites:
     name: "闻小AI (wenxiaobai.com)"
     enabled: true
     url: "https://www.wenxiaobai.com/"
-    firefox_profile_dir: "profiles/wenxiaobai_profile"
+    # 【修改】虽然我们用Chromium，但Profile目录名可以保持不变
+    firefox_profile_dir: "profiles/wenxiaobai_profile" 
     playwright_launch_options:
       headless: false
       viewport:
         width: 1920
         height: 1080
+      # --- 【核心修改】 ---
+      # 添加启动参数来禁用后台节流
+      args:
+        - "--disable-background-timer-throttling"
+        - "--disable-backgrounding-occluded-windows"
+        - "--disable-renderer-backgrounding"
+        - "--disable-hang-monitor"
+    # --- 修改结束 ---
     use_stealth: true
     pool_size: 1
     max_requests_per_instance: 100
