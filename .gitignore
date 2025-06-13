@@ -38,6 +38,7 @@ test_results.txt
 htmlcov/
 nosetests.xml
 coverage.xml
+.convert/
 
 # 工具缓存
 .pytest_cache/
