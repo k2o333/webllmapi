@@ -112,10 +112,10 @@ llm_sites:
           selector_key: "thinking_indicator"
           priority: 0
         - type: "text_stabilized"
-          stabilization_time_ms: 2500
+          stabilization_time_ms: 5009
           priority: 1
         - type: "timeout"
-          timeout_seconds: 180
+          timeout_seconds: 600
           priority: 2
 
       full_text_wait_strategy:

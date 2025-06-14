@@ -183,14 +183,12 @@ class LLMWebsiteAutomator:
             if 'viewport' in launch_options and launch_options['viewport'] is None:
                 del launch_options['viewport']
 
-            # --- 【核心修改】 ---
             logger.info(f"[{self.config.id}] Launching Chromium persistent context with options: {launch_options} and user_data_dir: {user_data_dir}")
             browser_context_obj = await playwright_obj.chromium.launch_persistent_context(
                 user_data_dir,
                 **launch_options
             )
             logger.info(f"[{self.config.id}] Chromium persistent context launched.")
-            # --- 修改结束 ---
             
             browser_pid = None
             page = browser_context_obj.pages[0] if browser_context_obj.pages else await browser_context_obj.new_page()
@@ -224,7 +222,6 @@ class LLMWebsiteAutomator:
                  self._playwright_instance = None
             raise
 
-    # ... (后续所有代码都无需修改，和你上一版的一样) ...
     async def _setup_stealth_mode(self, page: Page):
         await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
@@ -384,10 +381,12 @@ class LLMWebsiteAutomator:
         response_area_selector = self.config.selectors[self.config.response_handling.extraction_selector_key]
         text_property = self.config.response_handling.stream_text_property
         
+        # <---【修改1】新增 'first_chunk_received' 状态标志位
         stream_state = {
             '_stream_start_time': time.time(),
             'thinking_indicator_seen': False,
-            '_text_stable_since': None
+            '_text_stable_since': None,
+            'first_chunk_received': False
         }
         logger.debug(f"[{self.config.id}] Streaming from selector '{response_area_selector}', property '{text_property}'")
 
@@ -414,7 +413,13 @@ class LLMWebsiteAutomator:
                 if current_text != last_text:
                     new_content = current_text[len(last_text):]
                     if new_content:
+                        # <---【修改1】一旦收到有效的新内容，就设置标志位
+                        if not stream_state['first_chunk_received']:
+                            stream_state['first_chunk_received'] = True
+                            logger.info(f"[{self.config.id}] 已收到第一个 Stream 数据块，'text_stabilized' 机制现在激活。")
+
                         yield new_content
+                        bytes_yielded += len(new_content.encode('utf-8'))
                         last_text = current_text
                     stream_state['_text_stable_since'] = None
                 else:
@@ -467,6 +472,10 @@ class LLMWebsiteAutomator:
                 if not selector: return False
                 result = await page.is_visible(selector, timeout=100)
             elif condition.type == "text_stabilized":
+                # <---【修改2】在这里加入判断，只有收到过数据块才检查稳定
+                if not stream_state.get('first_chunk_received', False):
+                    return False
+
                 stable_since = stream_state.get('_text_stable_since')
                 if stable_since and (time.time() - stable_since) * 1000 >= condition.stabilization_time_ms:
                     result = True
