@@ -65,7 +65,7 @@ llm_sites:
       submit_button: "xpath=//div[@class='MsgInput_icon_container__4burH']//*[name()='svg']"
       response_markdown_body_last_assistant: "xpath=(//div[contains(@class, 'markdown-body') and @data-sentry-component='Markdown' and @data-sentry-source-file='index.tsx'])[1]"
       thinking_indicator: 'xpath=//*[@id="chat_turn_container"]//div[contains(@class, "loading-title") and normalize-space(.)="思考中..."]'
-      model_selection_popup_trigger: "xpath=//div[contains(@class, 'PopupItem_btn_act__') and contains(@data-key, 'deepseek') and .//div[contains(@class, 'PopupItem_btn_msg__')]]"
+      model_selection_popup_trigger: "xpath=//div[contains(@class, 'PopupItem_btn_') and (@data-key or contains(@class, '_act__') or contains(@class, '_inact__')) and .//div[contains(@class, 'PopupItem_btn_msg__')]]"
       wenxiaobai_deepseek_v3_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='日常问答（V3）']]"
       wenxiaobai_deepseek_r1_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='深度思考（R1）']]"
       wenxiaobai_qwen3_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='千问 3']]"
@@ -108,11 +108,120 @@ llm_sites:
       extraction_method: "innerText"
 
       stream_end_conditions:
-        - type: "element_disappears"
-          selector_key: "thinking_indicator"
+        - type: "element_appears"
+          selector_key: "last_response_options_trigger"
           priority: 0
         - type: "text_stabilized"
-          stabilization_time_ms: 5009
+          stabilization_time_ms: 15000
+          priority: 1
+        - type: "timeout"
+          timeout_seconds: 600
+          priority: 2
+
+      full_text_wait_strategy:
+        - type: "element_disappears"
+          selector_key: "thinking_indicator"
+        - type: "element_contains_text_or_is_not_empty"
+          selector_key: "response_markdown_body_last_assistant"
+
+    health_check:
+      enabled: true
+      interval_seconds: 300
+      timeout_seconds: 60
+      failure_threshold: 3
+      check_element_selector_key: "health_check_element"
+
+
+  - id: "googleai"  # <--- (1) 必填: API中使用的唯一ID，必须是小写字母、数字和连字符
+    name: "google_ai_studio" # <--- (2) 必填: 人类可读的名称，用于日志
+    enabled: true        # <--- (3) 必填: 设置为 true 来启用这个网站
+
+    url: "https://aistudio.google.com/prompts/new_chat" # <--- (4) 必填: 新网站的完整URL
+
+    # (5) 必填: 为新网站创建一个独立的Profile目录
+    firefox_profile_dir: "profiles/googleaistudio_profile" 
+
+    # (6) 可选: 浏览器启动选项，通常可以复用，按需修改
+    playwright_launch_options:
+      headless: false
+      viewport:
+        width: 1920
+        height: 1080
+      args:
+        - "--disable-background-timer-throttling"
+        - "--disable-backgrounding-occluded-windows"
+        - "--disable-renderer-backgrounding"
+        - "--disable-hang-monitor"
+    use_stealth: true
+
+    # (7) 必填: 资源管理配置
+    pool_size: 1
+    max_requests_per_instance: 100
+    max_memory_per_instance_mb: 1024
+
+    # (8) 核心：为新网站查找并填写所有选择器 (XPath或CSS Selector)
+    selectors:
+      # --- 基础交互 ---
+      new_chat_button: "xpath=(//div[@mattooltipposition='right' and contains(@class, 'nav-item-wrapper')]//a[@href='/prompts/new_chat' and .//span[contains(@class, 'material-symbols-outlined')]])[1]" # 新对话按钮
+      input_area: "xpath=//ms-autosize-textarea[contains(@class, 'ng-star-inserted') and @msfilecopypaste and .//textarea[@class and @spellcheck='true' and @aria-label]]"                   # 输入框
+      submit_button: "xpath=//span[@class and contains(@class, 'run-button-content') and contains(@class, 'ng-star-inserted')][./span[contains(@class,'label')] and .//mat-icon[contains(.,'keyboard_return')]]"       # 发送/提交按钮
+      
+      # --- 响应与状态 ---
+      # 【关键】当前正在生成的响应区域，必须非常精确！
+      response_markdown_body_last_assistant: "xpath=(//div[contains(@class,'turn-content') and not(ancestor::div[@data-turn-role='User'])]/ms-prompt-chunk[@id][contains(@class,'text-chunk')]/ms-text-chunk[contains(@class,'ng-star-inserted') and not(ancestor::*[contains(@class,'user-chunk')])])[last()]" 
+      # “思考中”或“加载中”的指示器元素，用于复合等待
+      thinking_indicator: "xpath=div.pro-thinking-spinner"
+      # 健康检查时要确认存在的元素，通常是输入框
+      health_check_element: "xpath=(//div[@mattooltipposition='right' and contains(@class, 'nav-item-wrapper')]//a[@href='/prompts/new_chat' and .//span[contains(@class, 'material-symbols-outlined')]])[1]"
+
+      # --- 模型选择 (如果网站支持) ---
+      model_selection_popup_trigger: "xpath=//div[contains(@class, 'PopupItem_btn_') and (@data-key or contains(@class, '_act__') or contains(@class, '_inact__')) and .//div[contains(@class, 'PopupItem_btn_msg__')]]"
+      googleai_gemini_2.5_pro_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='日常问答（V3）']]"
+      googleai_gemini_2.5_flash_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='日常问答（V3）']]"
+      googleai_gemini_2.0_flash_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='日常问答（V3）']]"
+
+      
+    # (9) 可选: 如果网站支持多种模型，配置模型变体
+    model_variants:
+      - id: "deepseek-v3"
+        name_on_page: "日常问答（V3）"
+        selection_flow:
+          - selector_key: "model_selection_popup_trigger"
+            description: "Click to open model selection popup"
+            wait_after_ms: 500
+          - selector_key: "wenxiaobai_deepseek_v3_choice"
+            description: "Select DeepSeek V3 model"
+            wait_after_ms: 200
+      - id: "deepseek-r1"
+        name_on_page: "深度思考（R1）"
+        selection_flow:
+          - selector_key: "model_selection_popup_trigger"
+            wait_after_ms: 500
+          - selector_key: "wenxiaobai_deepseek_r1_choice"
+            wait_after_ms: 200
+      - id: "qwen3"
+        name_on_page: "千问 3"
+        selection_flow:
+          - selector_key: "model_selection_popup_trigger"
+            wait_after_ms: 500
+          - selector_key: "wenxiaobai_qwen3_choice"
+            wait_after_ms: 200
+
+    options_to_sync: []
+
+    response_handling:
+      type: "stream"
+      stream_poll_interval_ms: 200
+      stream_text_property: "textContent"
+      extraction_selector_key: "response_markdown_body_last_assistant"
+      extraction_method: "innerText"
+
+      stream_end_conditions:
+        - type: "element_appears"
+          selector_key: "last_response_options_trigger"
+          priority: 0
+        - type: "text_stabilized"
+          stabilization_time_ms: 15000
           priority: 1
         - type: "timeout"
           timeout_seconds: 600

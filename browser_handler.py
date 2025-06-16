@@ -381,7 +381,6 @@ class LLMWebsiteAutomator:
         response_area_selector = self.config.selectors[self.config.response_handling.extraction_selector_key]
         text_property = self.config.response_handling.stream_text_property
         
-        # <---【修改1】新增 'first_chunk_received' 状态标志位
         stream_state = {
             '_stream_start_time': time.time(),
             'thinking_indicator_seen': False,
@@ -390,52 +389,92 @@ class LLMWebsiteAutomator:
         }
         logger.debug(f"[{self.config.id}] Streaming from selector '{response_area_selector}', property '{text_property}'")
 
+        thinking_indicator_selector = self.config.selectors.get("thinking_indicator")
+        
         try:
-            logger.info(f"[{self.config.id}] 等待响应容器 '{response_area_selector}' 出现 (超时30秒)...")
-            await page.wait_for_selector(response_area_selector, state="attached", timeout=30000)
-            logger.info(f"[{self.config.id}] 响应容器已出现，开始流式轮询。")
-        except Exception as e:
-            logger.error(f"[{self.config.id}] 等待响应容器超时或失败: {e}. 流式传输可能不会开始。")
+            wait_for_response_container_task = asyncio.create_task(
+                page.wait_for_selector(response_area_selector, state="attached", timeout=60000)
+            )
+            
+            wait_for_thinking_indicator_task = None
+            if thinking_indicator_selector:
+                wait_for_thinking_indicator_task = asyncio.create_task(
+                    page.wait_for_selector(thinking_indicator_selector, state="attached", timeout=60000)
+                )
 
+            logger.info(f"[{self.config.id}] 复合等待开始：60秒内等待响应容器或思考指示器出现...")
+            
+            tasks_to_wait = [t for t in [wait_for_response_container_task, wait_for_thinking_indicator_task] if t]
+            
+            done, pending = await asyncio.wait(tasks_to_wait, return_when=asyncio.FIRST_COMPLETED)
+            
+            for task in done:
+                if task is wait_for_response_container_task and not task.exception():
+                    logger.info(f"[{self.config.id}] 复合等待成功：响应容器 '{response_area_selector}' 已出现。")
+                elif task is wait_for_thinking_indicator_task and not task.exception():
+                    logger.info(f"[{self.config.id}] 复合等待成功：思考指示器 '{thinking_indicator_selector}' 已出现。")
+                elif task.exception():
+                    raise task.exception()
+            
+            for task in pending:
+                task.cancel()
+
+            await page.wait_for_selector(response_area_selector, state="attached", timeout=5000)
+            logger.info(f"[{self.config.id}] 响应容器确认已存在，开始流式轮询。")
+
+        except asyncio.TimeoutError:
+            logger.error(f"[{self.config.id}] 复合等待超时：60秒内，响应容器和思考指示器均未出现。流式传输将不会开始。")
+            return
+        except Exception as e:
+            logger.error(f"[{self.config.id}] 在复合等待期间发生意外错误: {e}. 流式传输可能不会开始。")
+            return
+
+        # <<<【核心修改】新增 last_inner_html 变量>>>
+        last_inner_html = ""
         loop_count = 0
         while True:
             try:
                 loop_count += 1
                 element = await page.query_selector(response_area_selector)
                 current_text = ""
+                # <<<【核心修改】新增 current_inner_html 变量>>>
+                current_inner_html = ""
+                
                 if element:
                     if text_property == "textContent": current_text = await element.text_content() or ""
                     elif text_property == "innerText": current_text = await element.inner_text() or ""
-                    elif text_property == "innerHTML": current_text = await element.inner_html() or ""
-                    else:
-                        current_text = await element.text_content() or ""
+                    # 总是获取 innerHTML 用于稳定性检查
+                    current_inner_html = await element.inner_html() or ""
                 
-                if current_text != last_text:
-                    new_content = current_text[len(last_text):]
-                    if new_content:
-                        # <---【修改1】一旦收到有效的新内容，就设置标志位
-                        if not stream_state['first_chunk_received']:
-                            stream_state['first_chunk_received'] = True
-                            logger.info(f"[{self.config.id}] 已收到第一个 Stream 数据块，'text_stabilized' 机制现在激活。")
-
-                        yield new_content
-                        bytes_yielded += len(new_content.encode('utf-8'))
-                        last_text = current_text
+                # <<<【核心修改】稳定性的判断标准升级为 textContent 或 innerHTML 任何一个发生变化>>>
+                if current_text != last_text or current_inner_html != last_inner_html:
                     stream_state['_text_stable_since'] = None
+                    
+                    if current_text != last_text:
+                        new_content = current_text[len(last_text):]
+                        if new_content:
+                            if not stream_state['first_chunk_received']:
+                                stream_state['first_chunk_received'] = True
+                                logger.info(f"[{self.config.id}] 已收到第一个 Stream 数据块，'text_stabilized' 机制现在激活。")
+                            
+                            yield new_content
+                            bytes_yielded += len(new_content.encode('utf-8'))
+                            last_text = current_text
+                    
+                    last_inner_html = current_inner_html
                 else:
                     if stream_state['_text_stable_since'] is None:
                         stream_state['_text_stable_since'] = time.time()
 
-                thinking_indicator_condition = next((c for c in self.config.response_handling.stream_end_conditions if c.type == "element_disappears"), None)
-                if thinking_indicator_condition and not stream_state['thinking_indicator_seen']:
-                    thinking_selector = self.config.selectors.get(thinking_indicator_condition.selector_key)
-                    if thinking_selector and await page.is_visible(thinking_selector, timeout=50):
-                        stream_state['thinking_indicator_seen'] = True
-
+                original_end_conditions = self.config.response_handling.stream_end_conditions
+                
+                # --- 【代码修改 1/2】: 移除硬编码的过滤器 ---
+                # 不再过滤任何条件类型，让配置完全决定行为
                 sorted_end_conditions = sorted(
-                    self.config.response_handling.stream_end_conditions,
+                    original_end_conditions,
                     key=lambda c: c.priority
                 )
+                
                 should_end_stream = False
                 for condition in sorted_end_conditions:
                     if await self._check_stream_end_condition(page, condition, current_text, stream_state):
@@ -463,16 +502,18 @@ class LLMWebsiteAutomator:
         result = False
         try:
             if condition.type == "element_disappears":
-                if not stream_state.get('thinking_indicator_seen', False): return False
+                # 注意：此处的 'thinking_indicator_seen' 逻辑可能需要根据您的具体需求进行调整或通用化
+                # if not stream_state.get('thinking_indicator_seen', False): return False
                 selector = self.config.selectors.get(condition.selector_key)
                 if not selector: return False
                 result = await page.is_hidden(selector, timeout=100)
+            # --- 【代码修改 2/2】: 增加对 element_appears 的处理 ---
             elif condition.type == "element_appears":
                 selector = self.config.selectors.get(condition.selector_key)
                 if not selector: return False
+                # 使用 is_visible 进行快速、非阻塞的检查
                 result = await page.is_visible(selector, timeout=100)
             elif condition.type == "text_stabilized":
-                # <---【修改2】在这里加入判断，只有收到过数据块才检查稳定
                 if not stream_state.get('first_chunk_received', False):
                     return False
 
