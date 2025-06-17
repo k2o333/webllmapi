@@ -429,7 +429,6 @@ class LLMWebsiteAutomator:
             logger.error(f"[{self.config.id}] 在复合等待期间发生意外错误: {e}. 流式传输可能不会开始。")
             return
 
-        # <<<【核心修改】新增 last_inner_html 变量>>>
         last_inner_html = ""
         loop_count = 0
         while True:
@@ -437,16 +436,13 @@ class LLMWebsiteAutomator:
                 loop_count += 1
                 element = await page.query_selector(response_area_selector)
                 current_text = ""
-                # <<<【核心修改】新增 current_inner_html 变量>>>
                 current_inner_html = ""
                 
                 if element:
                     if text_property == "textContent": current_text = await element.text_content() or ""
                     elif text_property == "innerText": current_text = await element.inner_text() or ""
-                    # 总是获取 innerHTML 用于稳定性检查
                     current_inner_html = await element.inner_html() or ""
                 
-                # <<<【核心修改】稳定性的判断标准升级为 textContent 或 innerHTML 任何一个发生变化>>>
                 if current_text != last_text or current_inner_html != last_inner_html:
                     stream_state['_text_stable_since'] = None
                     
@@ -468,8 +464,6 @@ class LLMWebsiteAutomator:
 
                 original_end_conditions = self.config.response_handling.stream_end_conditions
                 
-                # --- 【代码修改 1/2】: 移除硬编码的过滤器 ---
-                # 不再过滤任何条件类型，让配置完全决定行为
                 sorted_end_conditions = sorted(
                     original_end_conditions,
                     key=lambda c: c.priority
@@ -490,6 +484,27 @@ class LLMWebsiteAutomator:
                 logger.error(f"Error during streaming for {self.config.id}: {e}", exc_info=True)
                 break
         
+        # --- 【加固措施】: 在退出前执行最后一次文本检查 ---
+        logger.info(f"[{self.config.id}] Stream end condition met. Performing one final text poll to catch trailing data.")
+        try:
+            # 短暂等待，让最终的DOM更新有机会完成
+            await asyncio.sleep(0.1) 
+            element = await page.query_selector(response_area_selector)
+            if element:
+                final_text = ""
+                if text_property == "textContent": final_text = await element.text_content() or ""
+                elif text_property == "innerText": final_text = await element.inner_text() or ""
+                
+                if final_text and final_text != last_text:
+                    new_content = final_text[len(last_text):]
+                    if new_content:
+                        logger.info(f"[{self.config.id}] Caught and yielded final trailing chunk: '{new_content[:70].replace(chr(10), ' ')}...'")
+                        yield new_content
+                        bytes_yielded += len(new_content.encode('utf-8'))
+        except Exception as final_check_e:
+            logger.warning(f"[{self.config.id}] Error during final text poll: {final_check_e}")
+        # --- 加固措施结束 ---
+        
         duration = time.time() - stream_state['_stream_start_time']
         logger.info(
             f"[{self.config.id}] Streaming response finished. Duration: {duration:.2f}s, "
@@ -502,16 +517,12 @@ class LLMWebsiteAutomator:
         result = False
         try:
             if condition.type == "element_disappears":
-                # 注意：此处的 'thinking_indicator_seen' 逻辑可能需要根据您的具体需求进行调整或通用化
-                # if not stream_state.get('thinking_indicator_seen', False): return False
                 selector = self.config.selectors.get(condition.selector_key)
                 if not selector: return False
                 result = await page.is_hidden(selector, timeout=100)
-            # --- 【代码修改 2/2】: 增加对 element_appears 的处理 ---
             elif condition.type == "element_appears":
                 selector = self.config.selectors.get(condition.selector_key)
                 if not selector: return False
-                # 使用 is_visible 进行快速、非阻塞的检查
                 result = await page.is_visible(selector, timeout=100)
             elif condition.type == "text_stabilized":
                 if not stream_state.get('first_chunk_received', False):

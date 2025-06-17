@@ -134,7 +134,7 @@ llm_sites:
 
   - id: "googleai"  # <--- (1) 必填: API中使用的唯一ID，必须是小写字母、数字和连字符
     name: "google_ai_studio" # <--- (2) 必填: 人类可读的名称，用于日志
-    enabled: true        # <--- (3) 必填: 设置为 true 来启用这个网站
+    enabled: false        # <--- (3) 必填: 设置为 true 来启用这个网站
 
     url: "https://aistudio.google.com/prompts/new_chat" # <--- (4) 必填: 新网站的完整URL
 
@@ -144,14 +144,15 @@ llm_sites:
     # (6) 可选: 浏览器启动选项，通常可以复用，按需修改
     playwright_launch_options:
       headless: false
-      viewport:
-        width: 1920
-        height: 1080
-      args:
-        - "--disable-background-timer-throttling"
-        - "--disable-backgrounding-occluded-windows"
-        - "--disable-renderer-backgrounding"
-        - "--disable-hang-monitor"
+      # viewport:
+      #   width: 1920
+      #   height: 1080
+      # args:
+      #   - "--disable-blink-features=AutomationControlled" 
+      #   - "--disable-background-timer-throttling"
+      #   - "--disable-backgrounding-occluded-windows"
+      #   - "--disable-renderer-backgrounding"
+      #   - "--disable-hang-monitor"
     use_stealth: true
 
     # (7) 必填: 资源管理配置
