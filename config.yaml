@@ -240,3 +240,70 @@ llm_sites:
       timeout_seconds: 60
       failure_threshold: 3
       check_element_selector_key: "health_check_element"
+
+  - id: "minimax"
+    name: "minimax"
+    enabled: true
+    url: "https://chat.minimaxi.com/"
+    # 【修改】虽然我们用Chromium，但Profile目录名可以保持不变
+    firefox_profile_dir: "profiles/minimax_profile" 
+    playwright_launch_options:
+      headless: false
+      viewport:
+        width: 1920
+        height: 1080
+      # --- 【核心修改】 ---
+      # 添加启动参数来禁用后台节流
+      args:
+        - "--disable-background-timer-throttling"
+        - "--disable-backgrounding-occluded-windows"
+        - "--disable-renderer-backgrounding"
+        - "--disable-hang-monitor"
+    # --- 修改结束 ---
+    use_stealth: true
+    pool_size: 1
+    max_requests_per_instance: 100
+    max_memory_per_instance_mb: 1024
+
+    selectors:
+      new_chat_button: "xpath=//div[contains(concat(' ', normalize-space(@class), ' '), ' new-task-text ')]"
+      input_area: "xpath=(//textarea[@id='chat-input' and contains(@class, 'ant-input') and @enterkeyhint='send'])[last()]"
+      submit_button: 'xpath=(//*[@id="input-send-icon"]//*[name()="svg" or @role="button"])[4]'
+      response_markdown_body_last_assistant: "xpath=(//div[contains(@class, 'hailuo-markdown')])[last()]"
+      thinking_indicator: "xpath=//div[contains(concat(' ', @class, ' '), ' h-[') and contains(concat(' ', @class, ' '), ' items-center ') and .//div[normalize-space()='思考中...']]"
+      last_response_options_trigger: "xpath=(//div[@data-screenshot-ignore='true' and contains(@class, 'flex') and contains(@class, 'items-center') and contains(@class, 'md:mt-5')])[last()]"
+      health_check_element: "xpath=(//textarea[@id='chat-input' and contains(@class, 'ant-input') and @enterkeyhint='send'])[last()]"
+
+
+    options_to_sync: []
+
+    response_handling:
+      type: "stream"
+      stream_poll_interval_ms: 200
+      stream_text_property: "textContent"
+      extraction_selector_key: "response_markdown_body_last_assistant"
+      extraction_method: "innerText"
+
+      stream_end_conditions:
+        - type: "element_appears"
+          selector_key: "last_response_options_trigger"
+          priority: 0
+        - type: "text_stabilized"
+          stabilization_time_ms: 15000
+          priority: 1
+        - type: "timeout"
+          timeout_seconds: 600
+          priority: 2
+
+      full_text_wait_strategy:
+        - type: "element_disappears"
+          selector_key: "thinking_indicator"
+        - type: "element_contains_text_or_is_not_empty"
+          selector_key: "response_markdown_body_last_assistant"
+
+    health_check:
+      enabled: true
+      interval_seconds: 300
+      timeout_seconds: 60
+      failure_threshold: 3
+      check_element_selector_key: "health_check_element"
