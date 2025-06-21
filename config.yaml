@@ -66,8 +66,8 @@ llm_sites:
       response_markdown_body_last_assistant: "xpath=(//div[contains(@class, 'markdown-body') and @data-sentry-component='Markdown' and @data-sentry-source-file='index.tsx'])[1]"
       thinking_indicator: 'xpath=//*[@id="chat_turn_container"]//div[contains(@class, "loading-title") and normalize-space(.)="思考中..."]'
       model_selection_popup_trigger: "xpath=//div[contains(@class, 'PopupItem_btn_') and (@data-key or contains(@class, '_act__') or contains(@class, '_inact__')) and .//div[contains(@class, 'PopupItem_btn_msg__')]]"
-      wenxiaobai_deepseek_v3_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='日常问答（V3）']]"
-      wenxiaobai_deepseek_r1_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='深度思考（R1）']]"
+      wenxiaobai_deepseek_v3_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__')][.//div[contains(@class, 'PopupItem_option_title__')]//*[text()[contains(., '日常问答')]]]"
+      wenxiaobai_deepseek_r1_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__')][.//div[contains(@class, 'PopupItem_option_title__')]//*[text()[contains(., '深度思考')]]]"
       wenxiaobai_qwen3_choice: "xpath=//div[contains(@class, 'PopupItem_option_item__') and .//div[contains(@class, 'PopupItem_option_text__') and text()='千问 3']]"
       response_container_general: "xpath=(//div[contains(@class, 'Answser_answer_body_content')])[1]"
       last_response_options_trigger: "xpath=//*[@id='chat_turn_container']//div[starts-with(@class, 'TurnCard_right_opts') and contains(@class, 'TurnCard_more_opts_show')]"
@@ -119,8 +119,8 @@ llm_sites:
           priority: 2
 
       full_text_wait_strategy:
-        - type: "element_disappears"
-          selector_key: "thinking_indicator"
+        - type: "element_appears"
+          selector_key: "last_response_options_trigger"
         - type: "element_contains_text_or_is_not_empty"
           selector_key: "response_markdown_body_last_assistant"
 
@@ -298,6 +298,92 @@ llm_sites:
       full_text_wait_strategy:
         - type: "element_disappears"
           selector_key: "thinking_indicator"
+        - type: "element_contains_text_or_is_not_empty"
+          selector_key: "response_markdown_body_last_assistant"
+
+    health_check:
+      enabled: true
+      interval_seconds: 300
+      timeout_seconds: 60
+      failure_threshold: 3
+      check_element_selector_key: "health_check_element"
+
+  - id: "nano"
+    name: "nanoAI"
+    enabled: true
+    url: "https://bot.n.cn/chathome"
+    firefox_profile_dir: "profiles/nano_profile" 
+    playwright_launch_options:
+      headless: false
+      viewport:
+        width: 1920
+        height: 1080
+      args:
+        - "--disable-background-timer-throttling"
+        - "--disable-backgrounding-occluded-windows"
+        - "--disable-renderer-backgrounding"
+        - "--disable-hang-monitor"
+    use_stealth: true
+    pool_size: 1
+    max_requests_per_instance: 100
+    max_memory_per_instance_mb: 1024
+
+    selectors:
+      new_chat_button: "xpath=//div[contains(concat(' ', normalize-space(@class), ' '), ' flex ') and contains(concat(' ', normalize-space(@class), ' '), ' items-center ') and contains(concat(' ', normalize-space(@class), ' '), ' cursor-pointer ') and .//div[@class and normalize-space()='新建对话']]"
+      input_area: "xpath=//textarea[contains(@class, 'ant-input') and contains(@class, 'ant-input-borderless') and contains(@placeholder, '发送消息')]"
+      submit_button: "xpath=//button[contains(concat(' ', normalize-space(@class), ' '), ' send-btn ')][.//*[local-name() = 'svg' and .//*[local-name() = 'use'][contains(@*[name() = 'href' or name() = 'xlink:href'], '#icon-aircraft')]]]"
+      response_markdown_body_last_assistant: "xpath=(//div[contains(@class, 'message-item-content')]//div[contains(@class, 'markdown-container')] [ancestor::*[3]//section[contains(@class, 'flex justify-end')]] )[last()]"
+      thinking_indicator: "xpath=//div[contains(concat(' ', normalize-space(@class), ' '), ' inline-flex ') and contains(concat(' ', normalize-space(@class), ' '), ' cursor-pointer ') and contains(concat(' ', normalize-space(@class), ' '), ' rounded-[10px] ') and .//*[local-name()='svg' and .//*[local-name()='use'][contains(@href, 'icon-loading')]] and contains(normalize-space(), '思考中')]"
+      nano_deepseek_v3_choice: "xpath=//li[contains(@class, 'home-auto-item') and .//span[normalize-space() = 'DeepSeek编程超强'] and .//div[contains(@class, 'ant-image')]]"
+      nano_deepseek_r1_choice: "xpath=//li[contains(@class, 'home-auto-item') and .//span[normalize-space() = 'DeepSeek 0528新版'] and .//div[contains(@class, 'ant-image')]]"
+      nano_qwen3_choice: "xpath=//li[contains(@class, 'home-auto-item') and .//span[normalize-space() = '通义千问 Qwen3'] and .//div[contains(@class, 'ant-image')]]"
+      nano_360_r1_choice: "xpath=//li[contains(@class, 'home-auto-item') and .//span[normalize-space() = '智脑（R1）'] and .//div[contains(@class, 'ant-image')]]"
+      last_response_options_trigger: "xpath=(//section[contains(@class,'gap-[12px]') and .//button[@icon='copy'] and .//button[@icon='sync'] and .//*[contains(@class,'svg-icon')]])[last()]"
+      health_check_element: "xpath=//textarea[contains(@class, 'ant-input') and contains(@class, 'ant-input-borderless') and contains(@placeholder, '发送消息')]"
+
+    model_variants:
+      - id: "deepseek-v3"
+        name_on_page: "deepseek-v3"
+        selection_flow:
+          - selector_key: "nano_deepseek_v3_choice"
+            action: "click"
+            wait_after_ms: 200
+      - id: "deepseek-r1"
+        name_on_page: "deepseek-r1"
+        selection_flow:
+          - selector_key: "nano_deepseek_r1_choice"
+            action: "click"
+            wait_after_ms: 200
+      - id: "qwen3"
+        name_on_page: "通义 Qwen3"
+        selection_flow:
+          - selector_key: "nano_qwen3_choice"
+            action: "click"
+            wait_after_ms: 200
+
+    options_to_sync: []
+
+    response_handling:
+      type: "stream"
+      stream_poll_interval_ms: 200
+      stream_text_property: "textContent"
+      extraction_selector_key: "response_markdown_body_last_assistant"
+      extraction_method: "innerText"
+
+      stream_end_conditions:
+        - type: "element_appears"
+          selector_key: "last_response_options_trigger"
+          priority: 0
+        - type: "text_stabilized"
+          stabilization_time_ms: 15000
+          priority: 1
+        - type: "timeout"
+          timeout_seconds: 600
+          priority: 2
+
+      full_text_wait_strategy:
+        - type: "element_appears"
+          selector_key: "last_response_options_trigger"
         - type: "element_contains_text_or_is_not_empty"
           selector_key: "response_markdown_body_last_assistant"
 

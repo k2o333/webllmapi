@@ -1,4 +1,4 @@
-# main.py
+# 文件: main.py
 
 import os
 import asyncio
@@ -11,9 +11,10 @@ from typing import Dict, Optional, AsyncGenerator, List, Any
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Depends, Security
-from fastapi.security import APIKeyHeader
+from fastapi.security import HTTPBearer
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
+from tenacity import RetryError
 
 from config_manager import get_config, LLMSiteConfig, reload_config as actual_reload_config, AppConfig
 from browser_handler import LLMWebsiteAutomator
@@ -63,9 +64,6 @@ async def lifespan(app: FastAPI):
         logger.info(f"池初始化完成。创建了 {len(app.state.core.automator_pools)} 个自动化器池。")
     except Exception as e:
         logger.critical(f"启动时初始化池失败: {e}", exc_info=True)
-        # 在开发环境中，我们可能希望它继续运行以便调试
-        # 在生产环境中，这里可能应该直接 raise e 终止应用
-        pass
     
     gs = app.state.core.global_settings
     if gs and gs.idle_instance_check_interval_seconds > 0:
@@ -74,7 +72,6 @@ async def lifespan(app: FastAPI):
     
     yield  # 应用开始处理请求
     
-    # --- 关闭逻辑 ---
     logger.info("执行关闭逻辑...")
     core_state = app.state.core
     if core_state.idle_monitor_task and not core_state.idle_monitor_task.done():
@@ -82,21 +79,32 @@ async def lifespan(app: FastAPI):
         try:
             await core_state.idle_monitor_task
         except asyncio.CancelledError:
-            logger.info("空闲监控任务已取消。")
+            logger.info("空闲/过时实例监控任务已取消。")
 
-    for automator in list(core_state.stale_automators.keys()):
-        await _cleanup_stale_automator(automator, "shutdown")
-    core_state.stale_automators.clear()
+    cleanup_tasks = []
     
-    for model_id, pool in core_state.automator_pools.items():
+    for site_id, pool in core_state.automator_pools.items():
         while not pool.empty():
             try:
-                automator = await pool.get_nowait()
-                await automator.cleanup()
-            except (asyncio.QueueEmpty, Exception) as e:
-                logger.error(f"关闭时从 {model_id} 清理自动化器时出错: {e}")
+                automator = pool.get_nowait()
+                logger.info(f"正在为 {site_id} 的关闭创建清理任务...")
+                cleanup_tasks.append(automator.cleanup())
+            except asyncio.QueueEmpty:
                 break
+    
+    for automator in list(core_state.stale_automators.keys()):
+        logger.info(f"正在为过时的 {automator.config.id} 实例创建清理任务...")
+        cleanup_tasks.append(automator.cleanup())
+
+    if cleanup_tasks:
+        logger.info(f"正在等待 {len(cleanup_tasks)} 个自动化器实例关闭...")
+        results = await asyncio.gather(*cleanup_tasks, return_exceptions=True)
+        for i, res in enumerate(results):
+            if isinstance(res, Exception):
+                logger.error(f"关闭第 {i+1} 个自动化器时出错: {res}")
+    
     core_state.automator_pools.clear()
+    core_state.stale_automators.clear()
     core_state.site_configs.clear()
     logger.info("所有自动化器已清理。")
 
@@ -104,14 +112,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="LLM API 包装器",
     description="具有模型选择、实例池和热重载的包装器 API。",
-    version="1.3",
+    version="1.3.2",
     lifespan=lifespan
 )
 
 # --- Per-request logging helper ---
 @asynccontextmanager
 async def per_request_logging(request_id: str, site_id: str, logger: logging.Logger):
-    """一个上下文管理器，用于为单个请求动态添加和移除日志文件处理器。"""
     log_dir = Path("logs") / site_id
     log_dir.mkdir(parents=True, exist_ok=True)
     
@@ -125,7 +132,6 @@ async def per_request_logging(request_id: str, site_id: str, logger: logging.Log
     )
     handler.setFormatter(formatter)
     
-    # 将处理器添加到根 logger
     root_logger = logging.getLogger("wrapper_api")
     root_logger.addHandler(handler)
     logger.info(f"动态日志已启动，日志文件: {request_log_file}")
@@ -241,15 +247,21 @@ async def _initialize_pools(app: FastAPI, config_to_load: AppConfig):
 
 
 # --- API 端点 ---
-API_KEY_NAME = "X-API-KEY"
-api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+bearer_scheme = HTTPBearer()
 
-async def get_api_key(key: str = Security(api_key_header)):
+async def get_api_key(credentials: str = Depends(bearer_scheme)):
+    """
+    从 'Authorization: Bearer <token>' 头中获取并验证密钥。
+    """
     expected_key = os.getenv("API_KEY")
+    token = credentials.credentials
+    
     if not expected_key:
-        return "development_key"
-    if key == expected_key:
-        return key
+        return token
+    
+    if token == expected_key:
+        return token
+        
     raise HTTPException(status_code=403, detail="无效的 API 密钥")
 
 async def _stream_generator(automator: LLMWebsiteAutomator, prompt: str, variant_id: Optional[str], model_name: str, logger: logging.Logger, request_id: str):
@@ -259,8 +271,7 @@ async def _stream_generator(automator: LLMWebsiteAutomator, prompt: str, variant
         try:
             raw_generator = await automator.send_prompt_and_get_response(
                 prompt, 
-                None, 
-                variant_id, 
+                target_model_variant_id=variant_id, 
                 return_raw_generator=True
             )
 
@@ -277,34 +288,38 @@ async def _stream_generator(automator: LLMWebsiteAutomator, prompt: str, variant
             final_resp = ChatCompletionStreamResponse(id=response_id, created=int(time.time()), model=model_name, choices=[final_choice])
             yield f"data: {final_resp.model_dump_json(exclude_none=True)}\n\n"
             yield "data: [DONE]\n\n"
+        except RetryError as e:
+            error_message = f"All retry attempts failed. Last error: {e.last_attempt.exception()}"
+            logger.error(f"流处理错误 (重试失败): {error_message}", exc_info=False)
+            error_payload = {
+                "error": { "message": f"Server error after multiple retries: {str(e.last_attempt.exception())}", "type": "internal_server_error" }
+            }
+            yield f"data: {json.dumps(error_payload)}\n\n"
+            yield "data: [DONE]\n\n"
         except Exception as e:
             logger.error(f"流处理错误: {e}", exc_info=True)
             error_payload = {
-                "error": {
-                    "message": f"在流式传输期间发生服务器错误: {str(e)}",
-                    "type": "internal_server_error",
-                    "code": None
-                }
+                "error": { "message": f"An unexpected error occurred during streaming: {str(e)}", "type": "internal_server_error" }
             }
             yield f"data: {json.dumps(error_payload)}\n\n"
             yield "data: [DONE]\n\n"
 
 @app.post("/v1/chat/completions")
-async def chat_completions_endpoint(request: OpenAIChatCompletionRequest, req: Request):
+async def chat_completions_endpoint(request: OpenAIChatCompletionRequest, req: Request, api_key: str = Depends(get_api_key)):
     logger = req.app.state.logger
     core_state = req.app.state.core
     
     site_id, variant_id = (request.model.split("/", 1) + [None])[:2]
     request_id = str(uuid.uuid4())[:8]
     
-    logger.info(f"收到请求 [ID: {request_id}] -> 站点: '{site_id}', 变体: '{variant_id or '默认'}'")
+    logger.info(f"收到请求 [ID: {request_id}] -> 站点: '{site_id}', 变体: '{variant_id or '默认'}' (API Key: '***')")
 
     site_config = core_state.site_configs.get(site_id)
     if not site_config:
         raise HTTPException(status_code=404, detail=f"模型 '{site_id}' 未找到或未启用。")
     pool = core_state.automator_pools.get(site_id)
-    if not pool or pool.empty():
-        raise HTTPException(status_code=503, detail=f"服务暂时不可用：模型 '{site_id}' 的实例池为空或不可用。")
+    if not pool:
+        raise HTTPException(status_code=503, detail=f"服务暂时不可用：模型 '{site_id}' 的实例池未初始化。")
 
     automator = None
     try:
@@ -323,22 +338,24 @@ async def chat_completions_endpoint(request: OpenAIChatCompletionRequest, req: R
             )
         else:
             async with per_request_logging(request_id, site_id, logger):
-                resp_text = await automator.send_prompt_and_get_response(prompt, None, variant_id)
+                resp_text = await automator.send_prompt_and_get_response(prompt, target_model_variant_id=variant_id)
             return OpenAIChatCompletionResponse(
                 id=f"chatcmpl-{request_id}", object="chat.completion", created=int(time.time()), model=request.model,
                 choices=[OpenAIChatChoice(index=0, message=OpenAIMessage(role="assistant", content=resp_text), finish_reason="stop")],
                 usage=OpenAIUsage(prompt_tokens=len(prompt.split()), completion_tokens=len(resp_text.split()), total_tokens=len(prompt.split())+len(resp_text.split()))
             )
+    except asyncio.QueueEmpty:
+        logger.error(f"请求 [ID: {request_id}] 获取自动化器实例超时，因为池是空的。")
+        raise HTTPException(status_code=503, detail=f"服务暂时过载，模型 '{site_id}' 的所有实例都在使用中，请稍后重试。")
     except asyncio.TimeoutError:
         logger.error(f"请求 [ID: {request_id}] 获取自动化器实例超时。")
         raise HTTPException(status_code=503, detail="服务暂时不可用，请稍后重试。")
     except Exception as e:
         logger.error(f"请求 [ID: {request_id}] 处理时发生未知错误: {e}", exc_info=True)
-        # 归还实例，即使它可能已损坏
         if automator:
             await pool.put(automator)
-            automator = None # 确保 finally 块不会再次归还
-        raise HTTPException(status_code=500, detail=f"内部服务器错误: {e}")
+            automator = None
+        raise HTTPException(status_code=500, detail=f"内部服务器错误: {str(e)}")
     finally:
         if automator:
             await pool.put(automator)

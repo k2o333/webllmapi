@@ -1,3 +1,5 @@
+# 文件: call_api.py
+
 import requests
 import json
 import argparse
@@ -13,20 +15,25 @@ def call_chat_completion_api(
 ):
     """
     调用本地的 LLM 网页自动化 API。
+    现在使用标准的 "Authorization: Bearer <token>" 头进行认证。
 
     Args:
         model_id (str): 配置中 LLM 站点的 ID (例如 "wenxiaobai")，
-                        或站点 ID/模型变体 ID (例如 "wenxiaobai/deepseek-v3")。
+                        或站点 ID/模型变体 ID (例如 "wenxiaobai/deepseek-r1")。
         prompt (str): 要发送给 LLM 的用户提示。
         api_key (str): 访问 API 的密钥 (与 .env 中的 API_KEY 对应)。
         stream (bool): 如果为 True，则启用流式响应。
         api_base_url (str): 本地 API 服务的基地址。
     """
     url = f"{api_base_url}/v1/chat/completions"
+    
+    # --- 【核心修改】 ---
+    # 将认证方式从自定义的 "X-API-KEY" 改为标准的 "Authorization: Bearer"
     headers = {
         "Content-Type": "application/json",
-        "X-API-KEY": api_key
+        "Authorization": f"Bearer {api_key}"
     }
+    # --- 修改结束 ---
 
     messages = [{"role": "user", "content": prompt}]
 
@@ -46,7 +53,7 @@ def call_chat_completion_api(
         if stream:
             # 流式请求
             full_response_content = ""
-            with requests.post(url, headers=headers, json=data, stream=True) as response:
+            with requests.post(url, headers=headers, json=data, stream=True, timeout=300) as response:
                 response.raise_for_status() # 检查 HTTP 错误，如果状态码不是 2xx 则抛出异常
 
                 print("流式响应:")
@@ -62,28 +69,38 @@ def call_chat_completion_api(
                             
                             try:
                                 chunk = json.loads(json_data_str)
+                                # 检查是否有错误负载
+                                if "error" in chunk:
+                                    error_info = chunk["error"]
+                                    print(f"\n[API 返回错误] 类型: {error_info.get('type')}, 消息: {error_info.get('message')}")
+                                    continue
+
                                 content = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
                                 if content:
                                     print(content, end='', flush=True) # 实时打印内容
                                     full_response_content += content
                             except json.JSONDecodeError:
                                 print(f"\n[API 响应解析错误] 无法解析 JSON 行: {json_data_str}")
-                                # 可以根据需要记录更详细的错误
                 print("\n\n流式响应结束。")
                 print(f"总计接收字符: {len(full_response_content)}")
 
         else:
             # 非流式请求
-            response = requests.post(url, headers=headers, json=data)
+            response = requests.post(url, headers=headers, json=data, timeout=300)
             response.raise_for_status() # 检查 HTTP 错误
 
             print("非流式响应:")
             print(json.dumps(response.json(), indent=2, ensure_ascii=False))
 
     except requests.exceptions.HTTPError as e:
-        print(f"\n[HTTP 错误] 请求失败: {e}")
+        print(f"\n[HTTP 错误] 请求失败: {e.response.status_code} {e.response.reason}")
         if e.response is not None:
-            print(f"服务器响应: {e.response.text}")
+            try:
+                # 尝试以JSON格式打印错误详情
+                print(f"服务器响应: {json.dumps(e.response.json(), indent=2, ensure_ascii=False)}")
+            except json.JSONDecodeError:
+                # 如果不是JSON，则以文本形式打印
+                print(f"服务器响应: {e.response.text}")
     except requests.exceptions.ConnectionError as e:
         print(f"\n[连接错误] 无法连接到服务器。请确保您的 FastAPI 服务已运行在 {api_base_url}。错误: {e}")
     except requests.exceptions.Timeout as e:
@@ -94,9 +111,9 @@ def call_chat_completion_api(
         print(f"\n[意外错误] 发生意外错误: {e}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="调用本地 LLM 网页自动化 API")
+    parser = argparse.ArgumentParser(description="调用本地 LLM 网页自动化 API (使用 Bearer Token)")
     parser.add_argument("--model", "-m", type=str, required=True,
-                        help="LLM 站点 ID 或 '站点ID/模型变体ID' (例如: 'wenxiaobai' 或 'wenxiaobai/deepseek-v3')")
+                        help="LLM 站点 ID 或 '站点ID/模型变体ID' (例如: 'wenxiaobai' 或 'wenxiaobai/deepseek-r1')")
     parser.add_argument("--prompt", "-p", type=str, required=True,
                         help="发送给 LLM 的用户提示")
     parser.add_argument("--stream", "-s", action="store_true",

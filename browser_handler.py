@@ -19,11 +19,25 @@ logger = logging.getLogger("wrapper_api.browser_handler")
 async def robust_click(page: Page, selector: str, timeout: int = 10000):
     """
     一个健壮的点击辅助函数，它会按顺序尝试多种方法来点击一个元素。
-    简化版：移除了窗口激活逻辑，因为浏览器启动参数已处理后台节流问题。
     """
     log_prefix = f"[robust_click for '{selector[:60]}...']"
     
-    # 策略 1: Playwright 标准点击 (现在应该更有效)
+    try:
+        await page.wait_for_selector(selector, state="attached", timeout=timeout)
+    except Exception as find_exc:
+        logger.error(f"{log_prefix} 无法在DOM中定位到元素，所有点击尝试中止。错误: {find_exc}")
+        error_snapshot_dir = Path("error_snapshots")
+        error_snapshot_dir.mkdir(exist_ok=True)
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        screenshot_path = error_snapshot_dir / f"robust_click_fail_{timestamp}.png"
+        try:
+            await page.screenshot(path=screenshot_path)
+            logger.info(f"Saved error screenshot for robust_click failure to {screenshot_path}")
+        except Exception as se:
+            logger.error(f"Failed to save error screenshot: {se}")
+        raise find_exc
+
+    # 策略 1: Playwright 标准点击
     try:
         logger.debug(f"{log_prefix} 尝试策略 1: 标准 page.click()")
         await page.click(selector, timeout=timeout)
@@ -32,21 +46,15 @@ async def robust_click(page: Page, selector: str, timeout: int = 10000):
     except Exception as e:
         logger.warning(f"{log_prefix} 策略 1 (标准 click) 失败: {e}")
 
-    # 如果策略1失败，获取元素句柄以用于后续策略
-    element_handle = None
-    try:
-        element_handle = await page.wait_for_selector(selector, state="attached", timeout=5000)
-    except Exception as find_exc:
-        logger.error(f"{log_prefix} 无法定位元素，所有点击尝试中止。错误: {find_exc}")
-        raise find_exc
-
+    # 获取元素句柄用于后续策略
+    element_handle = await page.locator(selector).element_handle()
     if not element_handle:
         raise RuntimeError(f"无法为选择器 '{selector}' 获取元素句柄")
 
     # 策略 2: JavaScript evaluation click
     try:
         logger.debug(f"{log_prefix} 尝试策略 2: JavaScript evaluation click")
-        await page.evaluate("(element) => { if (element && typeof element.click === 'function') element.click(); }", element_handle)
+        await element_handle.evaluate("(element) => { if (element && typeof element.click === 'function') element.click(); }")
         logger.info(f"{log_prefix} JavaScript evaluation click 成功。")
         return
     except Exception as e:
@@ -78,7 +86,6 @@ class BrowserInstance:
         self.process = psutil.Process(browser_pid) if browser_pid and psutil.pid_exists(browser_pid) else None
         self.is_available = True
         self.is_mock = is_mock
-        # 字段名保持不变，但内容现在是Chromium的Profile
         self.firefox_profile_dir_path: Optional[Path] = None
 
     async def get_memory_usage(self) -> float:
@@ -86,7 +93,14 @@ class BrowserInstance:
             return getattr(self, 'mock_memory_usage', 50.0)
         if self.process:
             try:
-                return self.process.memory_info().rss / (1024 * 1024)
+                mem_info = self.process.memory_info().rss
+                children = self.process.children(recursive=True)
+                for child in children:
+                    try:
+                        mem_info += child.memory_info().rss
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+                return mem_info / (1024 * 1024)
             except psutil.NoSuchProcess:
                 logger.warning(f"Browser process with PID {self.browser_pid} not found for memory usage check.")
                 self.process = None
@@ -124,7 +138,10 @@ class BrowserInstance:
                     await self.browser_context.close()
             self.is_available = False
         except Exception as e:
-            logger.error(f"Error during BrowserInstance cleanup (PID: {self.browser_pid}): {e}")
+            if "Target page, context or browser has been closed" not in str(e):
+                logger.error(f"Error during BrowserInstance cleanup (PID: {self.browser_pid}): {e}")
+            else:
+                logger.info(f"BrowserInstance (PID: {self.browser_pid}) was already closed.")
 
 
 class LLMWebsiteAutomator:
@@ -160,6 +177,13 @@ class LLMWebsiteAutomator:
         playwright_obj = None
         browser_context_obj = None
 
+        def get_browser_pids(browser_name: str = "chrome"):
+            pids = set()
+            for proc in psutil.process_iter(['pid', 'name']):
+                if proc.info['name'] and browser_name in proc.info['name'].lower():
+                    pids.add(proc.info['pid'])
+            return pids
+
         try:
             logger.info(f"[{self.config.id}] Starting Playwright...")
             playwright_obj = await async_playwright().start()
@@ -183,6 +207,13 @@ class LLMWebsiteAutomator:
             if 'viewport' in launch_options and launch_options['viewport'] is None:
                 del launch_options['viewport']
 
+            channel = getattr(self.config.playwright_launch_options, 'channel', 'chrome')
+            browser_process_name = "msedge" if channel and "edge" in channel else "chrome"
+            logger.info(f"[{self.config.id}] Will be monitoring for '{browser_process_name}' processes.")
+
+            pids_before_launch = get_browser_pids(browser_process_name)
+            logger.debug(f"PIDs for '{browser_process_name}' before launch: {pids_before_launch}")
+
             logger.info(f"[{self.config.id}] Launching Chromium persistent context with options: {launch_options} and user_data_dir: {user_data_dir}")
             browser_context_obj = await playwright_obj.chromium.launch_persistent_context(
                 user_data_dir,
@@ -190,7 +221,17 @@ class LLMWebsiteAutomator:
             )
             logger.info(f"[{self.config.id}] Chromium persistent context launched.")
             
-            browser_pid = None
+            await asyncio.sleep(1.5)
+            pids_after_launch = get_browser_pids(browser_process_name)
+            logger.debug(f"PIDs for '{browser_process_name}' after launch: {pids_after_launch}")
+            new_pids = pids_after_launch - pids_before_launch
+            browser_pid = new_pids.pop() if new_pids else None
+            
+            if browser_pid:
+                logger.info(f"[{self.config.id}] Successfully identified new browser process with PID: {browser_pid}")
+            else:
+                logger.warning(f"[{self.config.id}] Could not identify a new browser process PID.")
+
             page = browser_context_obj.pages[0] if browser_context_obj.pages else await browser_context_obj.new_page()
             
             if self.config.playwright_launch_options.viewport:
@@ -271,7 +312,7 @@ class LLMWebsiteAutomator:
 
             try:
                 if step.action == "click":
-                    await robust_click(page, selector_str, timeout=10000)
+                    await robust_click(page, selector_str, timeout=15000)
                     logger.debug(f"[{self.config.id}] Clicked element for '{step.selector_key}'.")
                 else:
                     logger.warning(f"[{self.config.id}] Unsupported action '{step.action}' in model selection flow. Skipping step.")
@@ -343,6 +384,15 @@ class LLMWebsiteAutomator:
                 logger.debug(f"[{self.config.id}] Step 2: Executing model selection for '{target_model_variant_id}'...")
                 await self._execute_model_selection_flow(target_model_variant_id, page)
                 logger.debug(f"[{self.config.id}] Step 2: Model selection complete.")
+                
+                try:
+                    input_selector_for_wait = self.config.selectors["input_area"]
+                    logger.info(f"[{self.config.id}] Re-waiting for input area to be ready after model selection...")
+                    await page.wait_for_selector(input_selector_for_wait, state="visible", timeout=15000)
+                    logger.info(f"[{self.config.id}] Input area is ready.")
+                except Exception as e:
+                    logger.error(f"[{self.config.id}] Timed out waiting for input area after model selection: {e}")
+                    raise RuntimeError("Input area not available after model selection.")
 
             input_selector = self.config.selectors["input_area"]
             submit_selector = self.config.selectors["submit_button"]
@@ -373,7 +423,7 @@ class LLMWebsiteAutomator:
                     logger.info(f"Saved error screenshot to {screenshot_path}")
             except Exception as se:
                 logger.error(f"Failed to save error screenshot: {se}")
-            raise RetryError(f"Final attempt failed for send_message on {self.config.id}: {e}")
+            raise
 
     async def _handle_streaming_response(self, page: Page) -> AsyncGenerator[str, None]:
         last_text = ""
@@ -406,27 +456,33 @@ class LLMWebsiteAutomator:
             
             tasks_to_wait = [t for t in [wait_for_response_container_task, wait_for_thinking_indicator_task] if t]
             
-            done, pending = await asyncio.wait(tasks_to_wait, return_when=asyncio.FIRST_COMPLETED)
-            
-            for task in done:
-                if task is wait_for_response_container_task and not task.exception():
-                    logger.info(f"[{self.config.id}] 复合等待成功：响应容器 '{response_area_selector}' 已出现。")
-                elif task is wait_for_thinking_indicator_task and not task.exception():
-                    logger.info(f"[{self.config.id}] 复合等待成功：思考指示器 '{thinking_indicator_selector}' 已出现。")
-                elif task.exception():
-                    raise task.exception()
-            
-            for task in pending:
-                task.cancel()
+            if tasks_to_wait:
+                done, pending = await asyncio.wait(tasks_to_wait, return_when=asyncio.FIRST_COMPLETED)
+                
+                for task in done:
+                    if task is wait_for_response_container_task and not task.exception():
+                        logger.info(f"[{self.config.id}] 复合等待成功：响应容器 '{response_area_selector}' 已出现。")
+                    elif task is wait_for_thinking_indicator_task and not task.exception():
+                        logger.info(f"[{self.config.id}] 复合等待成功：思考指示器 '{thinking_indicator_selector}' 已出现。")
+                    elif task.exception():
+                        # We will handle the timeout gracefully, just log other exceptions
+                        if not isinstance(task.exception(), asyncio.TimeoutError):
+                            logger.warning(f"[{self.config.id}] 复合等待任务之一出现非超时错误: {task.exception()}")
 
-            await page.wait_for_selector(response_area_selector, state="attached", timeout=5000)
-            logger.info(f"[{self.config.id}] 响应容器确认已存在，开始流式轮询。")
+                for task in pending:
+                    task.cancel()
+            
+            # --- 【核心修改】 ---
+            # 移除在复合等待之后的多余的、带有硬编码5秒超时的等待。
+            # await page.wait_for_selector(response_area_selector, state="attached", timeout=5000)
+            logger.info(f"[{self.config.id}] 复合等待结束，开始流式轮询。")
+            # --- 修改结束 ---
 
         except asyncio.TimeoutError:
             logger.error(f"[{self.config.id}] 复合等待超时：60秒内，响应容器和思考指示器均未出现。流式传输将不会开始。")
             return
         except Exception as e:
-            logger.error(f"[{self.config.id}] 在复合等待期间发生意外错误: {e}. 流式传输可能不会开始。")
+            logger.error(f"[{self.config.id}] 在复合等待期间发生意外错误: {e}. 流式传输可能不会开始。", exc_info=True)
             return
 
         last_inner_html = ""
@@ -484,10 +540,8 @@ class LLMWebsiteAutomator:
                 logger.error(f"Error during streaming for {self.config.id}: {e}", exc_info=True)
                 break
         
-        # --- 【加固措施】: 在退出前执行最后一次文本检查 ---
         logger.info(f"[{self.config.id}] Stream end condition met. Performing one final text poll to catch trailing data.")
         try:
-            # 短暂等待，让最终的DOM更新有机会完成
             await asyncio.sleep(0.1) 
             element = await page.query_selector(response_area_selector)
             if element:
@@ -503,7 +557,6 @@ class LLMWebsiteAutomator:
                         bytes_yielded += len(new_content.encode('utf-8'))
         except Exception as final_check_e:
             logger.warning(f"[{self.config.id}] Error during final text poll: {final_check_e}")
-        # --- 加固措施结束 ---
         
         duration = time.time() - stream_state['_stream_start_time']
         logger.info(
@@ -620,8 +673,8 @@ class LLMWebsiteAutomator:
             else:
                 raise TypeError("Unexpected response type from send_message")
         except RetryError as e:
-            logger.error(f"[{self.config.id}] All retry attempts failed for prompt: {prompt[:50]}. Error: {e.last_attempt.exception()}", exc_info=True)
-            raise
+            logger.error(f"[{self.config.id}] All retry attempts failed for prompt: {prompt[:50]}. Last error: {e.last_attempt.exception()}", exc_info=False)
+            raise e
         except Exception as e:
             logger.error(f"[{self.config.id}] Unhandled error processing prompt: {prompt[:50]}. Error: {e}", exc_info=True)
             raise

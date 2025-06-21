@@ -1,4 +1,5 @@
-# models.py
+# 文件: models.py
+
 from enum import Enum
 from typing import Dict, List, Optional, Union, Any
 from pydantic import BaseModel, Field, field_validator, model_validator, HttpUrl, ConfigDict
@@ -209,6 +210,7 @@ class ViewportConfig(BaseModel):
     height: int = 1080
 
 class PlaywrightLaunchOptions(BaseModel):
+    channel: Optional[str] = None  # <-- 【核心修改】
     headless: bool = True
     viewport: Optional[ViewportConfig] = None
     user_agent: Optional[str] = None
@@ -289,7 +291,6 @@ class LLMSiteConfig(BaseModel):
         description="用于测试目的的模拟响应"
     )
 
-    # 修正点：添加 model_config 以解决 Pydantic 警告
     model_config = ConfigDict(
         protected_namespaces=()
     )
