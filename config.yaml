@@ -55,7 +55,7 @@ llm_sites:
         - "--disable-hang-monitor"
     # --- 修改结束 ---
     use_stealth: true
-    pool_size: 1
+    pool_size: 3
     max_requests_per_instance: 100
     max_memory_per_instance_mb: 1024
 
@@ -324,7 +324,7 @@ llm_sites:
         - "--disable-renderer-backgrounding"
         - "--disable-hang-monitor"
     use_stealth: true
-    pool_size: 1
+    pool_size: 3
     max_requests_per_instance: 100
     max_memory_per_instance_mb: 1024
 
