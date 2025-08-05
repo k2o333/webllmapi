@@ -332,14 +332,14 @@ llm_sites:
       new_chat_button: "xpath=//div[contains(concat(' ', normalize-space(@class), ' '), ' flex ') and contains(concat(' ', normalize-space(@class), ' '), ' items-center ') and contains(concat(' ', normalize-space(@class), ' '), ' cursor-pointer ') and .//div[@class and normalize-space()='新建对话']]"
       input_area: "xpath=//textarea[contains(@class, 'ant-input') and contains(@class, 'ant-input-borderless') and contains(@placeholder, '发送消息')]"
       submit_button: "xpath=//button[contains(concat(' ', normalize-space(@class), ' '), ' send-btn ')][.//*[local-name() = 'svg' and .//*[local-name() = 'use'][contains(@*[name() = 'href' or name() = 'xlink:href'], '#icon-aircraft')]]]"
-      response_markdown_body_last_assistant: "xpath=(//div[contains(@class, 'message-item-content')]//div[contains(@class, 'markdown-container')] [ancestor::*[3]//section[contains(@class, 'flex justify-end')]] )[last()]"
+      response_markdown_body_last_assistant: "xpath=(//div[contains(@class, 'markdown-container') and not(starts-with(normalize-space(), '本模型'))])[last()]"
       thinking_indicator: "xpath=//div[contains(concat(' ', normalize-space(@class), ' '), ' inline-flex ') and contains(concat(' ', normalize-space(@class), ' '), ' cursor-pointer ') and contains(concat(' ', normalize-space(@class), ' '), ' rounded-[10px] ') and .//*[local-name()='svg' and .//*[local-name()='use'][contains(@href, 'icon-loading')]] and contains(normalize-space(), '思考中')]"
       nano_deepseek_v3_choice: "xpath=//li[contains(@class, 'home-auto-item') and .//span[normalize-space() = 'DeepSeek编程超强'] and .//div[contains(@class, 'ant-image')]]"
       nano_deepseek_r1_choice: "xpath=//li[contains(@class, 'home-auto-item') and .//span[normalize-space() = 'DeepSeek 0528新版'] and .//div[contains(@class, 'ant-image')]]"
       nano_qwen3_choice: "xpath=//li[contains(@class, 'home-auto-item') and .//span[normalize-space() = '通义千问 Qwen3'] and .//div[contains(@class, 'ant-image')]]"
       nano_360_r1_choice: "xpath=//li[contains(@class, 'home-auto-item') and .//span[normalize-space() = '智脑（R1）'] and .//div[contains(@class, 'ant-image')]]"
       last_response_options_trigger: "xpath=(//section[contains(@class,'gap-[12px]') and .//button[@icon='copy'] and .//button[@icon='sync'] and .//*[contains(@class,'svg-icon')]])[last()]"
-      health_check_element: "xpath=//textarea[contains(@class, 'ant-input') and contains(@class, 'ant-input-borderless') and contains(@placeholder, '发送消息')]"
+      health_check_element: "xpath=//div[contains(concat(' ', normalize-space(@class), ' '), ' flex ') and contains(concat(' ', normalize-space(@class), ' '), ' items-center ') and contains(concat(' ', normalize-space(@class), ' '), ' cursor-pointer ') and .//div[@class and normalize-space()='新建对话']]"
 
     model_variants:
       - id: "deepseek-v3"

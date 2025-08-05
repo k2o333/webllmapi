@@ -10,10 +10,12 @@ from contextlib import asynccontextmanager
 from typing import Dict, Optional, AsyncGenerator, List, Any
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, Depends, Security
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPBearer
+# --- FIX-1: 导入 pydantic_core.to_jsonable_python ---
+from pydantic_core import to_jsonable_python
 from dotenv import load_dotenv
 from tenacity import RetryError
 
@@ -123,7 +125,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="LLM API 包装器",
     description="具有模型选择、实例池和热重载的包装器 API。",
-    version="1.3.2",
+    version="1.3.3", # 版本号小幅提升
     lifespan=lifespan
 )
 
@@ -155,11 +157,14 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     except Exception as e:
         logger.error(f"在处理请求验证错误时，无法读取请求体: {e}")
 
-    logger.error(f"具体的验证错误: {exc.errors()}")
+    # --- FIX-1: 使用 to_jsonable_python 转换错误，防止序列化失败 ---
+    # Pydantic v2 的 exc.errors() 可能包含无法直接JSON化的异常对象
+    serializable_errors = to_jsonable_python(exc.errors())
+    logger.error(f"具体的验证错误 (可序列化): {serializable_errors}")
     
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors()},
+        content={"detail": serializable_errors},
     )
 
 
@@ -241,7 +246,13 @@ async def monitor_idle_instances_periodically(app: FastAPI):
                 site_config = core_state.site_configs.get(model_id)
                 if not site_config or pool.empty(): continue
                 
-                idle_instance = await pool.get()
+                # We check only one instance per cycle to avoid holding up the monitor
+                idle_instance = None
+                try:
+                    idle_instance = pool.get_nowait()
+                except asyncio.QueueEmpty:
+                    continue # Pool is busy, check next time
+
                 recycled = False
                 try:
                     is_healthy = await idle_instance.is_healthy()
@@ -261,7 +272,7 @@ async def monitor_idle_instances_periodically(app: FastAPI):
                     except Exception as create_e:
                         logger.error(f"为 {model_id} 创建替换实例失败: {create_e}")
                 finally:
-                    if not recycled:
+                    if not recycled and idle_instance:
                         await pool.put(idle_instance)
         except asyncio.CancelledError:
             logger.info("空闲/过时实例监控任务已取消。")
@@ -368,14 +379,41 @@ async def chat_completions_endpoint(request: OpenAIChatCompletionRequest, req: R
     if not pool:
         raise HTTPException(status_code=503, detail=f"服务暂时不可用：模型 '{site_id}' 的实例池未初始化。")
 
+    # --- FIX-2: 添加重试循环和健康检查，防止竞争条件 ---
     automator = None
+    max_retries = 3  # 防止无限循环获取实例
+    for attempt in range(max_retries):
+        try:
+            timeout = core_state.global_settings.timeout if core_state.global_settings else 60
+            automator = await asyncio.wait_for(pool.get(), timeout=timeout)
+            
+            # 获取实例后立即进行健康检查
+            is_healthy = await automator.is_healthy()
+            if not is_healthy:
+                logger.warning(f"从池中获取的 {site_id} 实例 [尝试 {attempt+1}/{max_retries}] 不健康，正在清理并重试。")
+                # 异步启动清理任务，不阻塞当前请求
+                asyncio.create_task(_cleanup_stale_automator(automator, "unhealthy_on_get"))
+                automator = None  # 置为 None 以便重试
+                continue  # 继续下一次循环尝试获取
+            
+            # 如果实例健康，则跳出循环，继续执行
+            logger.debug(f"成功获取并验证了健康的 {site_id} 实例。")
+            break
+
+        except (asyncio.QueueEmpty, asyncio.TimeoutError):
+            logger.error(f"请求 [ID: {request_id}] 获取自动化器实例超时。")
+            raise HTTPException(status_code=503, detail=f"服务暂时过载或不可用，模型 '{site_id}' 的所有实例都在使用中或初始化失败。")
+
+    # 检查是否成功获取到实例
+    if not automator:
+        logger.error(f"在 {max_retries} 次尝试后，未能为 {site_id} 获取到健康的实例。")
+        raise HTTPException(status_code=503, detail=f"服务暂时不可用，无法为模型 '{site_id}' 提供健康的实例。")
+    # --- FIX-2 结束 ---
+
     try:
-        timeout = core_state.global_settings.timeout if core_state.global_settings else 60
-        automator = await asyncio.wait_for(pool.get(), timeout=timeout)
-        
         user_message = next((msg.content for msg in reversed(request.messages) if msg.role == 'user'), None)
         if user_message is None:
-            raise HTTPException(status_code=400, detail="请求的 messages 列表中没有找到 user角色的消息。")
+            raise HTTPException(status_code=400, detail="请求的 messages 列表中没有找到 user 角色的消息。")
         prompt = user_message
 
         if request.stream:
@@ -391,18 +429,14 @@ async def chat_completions_endpoint(request: OpenAIChatCompletionRequest, req: R
                 choices=[OpenAIChatChoice(index=0, message=OpenAIMessage(role="assistant", content=resp_text), finish_reason="stop")],
                 usage=OpenAIUsage(prompt_tokens=len(prompt.split()), completion_tokens=len(resp_text.split()), total_tokens=len(prompt.split())+len(resp_text.split()))
             )
-    except asyncio.QueueEmpty:
-        logger.error(f"请求 [ID: {request_id}] 获取自动化器实例超时，因为池是空的。")
-        raise HTTPException(status_code=503, detail=f"服务暂时过载，模型 '{site_id}' 的所有实例都在使用中，请稍后重试。")
-    except asyncio.TimeoutError:
-        logger.error(f"请求 [ID: {request_id}] 获取自动化器实例超时。")
-        raise HTTPException(status_code=503, detail="服务暂时不可用，请稍后重试。")
     except Exception as e:
         logger.error(f"请求 [ID: {request_id}] 处理时发生未知错误: {e}", exc_info=True)
+        # 如果 automator 存在，它可能处于一个坏的状态，最好是清理掉而不是放回池中
         if automator:
-            await pool.put(automator)
-            automator = None
+            asyncio.create_task(_cleanup_stale_automator(automator, f"error_during_request:_{type(e).__name__}"))
+            automator = None # 确保 finally 块不会再次操作它
         raise HTTPException(status_code=500, detail=f"内部服务器错误: {str(e)}")
     finally:
         if automator:
+            # 将使用完毕的健康实例放回池中
             await pool.put(automator)
